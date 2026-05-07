@@ -1241,6 +1241,7 @@ fn spawnRegister(self: *VM, instr: Instruction) EvalError!void {
 }
 
 fn evalRegister(self: *VM, instr: Instruction) EvalError!void {
+    // std.debug.print("{any}\n", .{instr});
     switch (instr.op) {
         .move => try self.copyRegister(instr.a, instr.b),
         .load_const => try self.writeRegister(instr.a, try self.getConstant(instr.bx)),

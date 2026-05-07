@@ -1190,6 +1190,10 @@ pub const Compiler = struct {
         if (needs_index) try self.releaseRegister(); // idx
         try self.releaseRegister(); // val
 
+        // body clobbers them if you dont reserve
+        const loop_state_end = try reg(state_reg + 3);
+        self.reserveRegisters(loop_state_end);
+
         try self.compile(body, true);
 
         // move body result to loop result
@@ -1314,6 +1318,13 @@ pub const Compiler = struct {
             try self.releaseRegister();
         }
 
+        if (iter_storage == .local) {
+            self.reserveRegisters(@intCast(iter_storage.local + 1));
+        }
+        if (idx_storage == .local) {
+            self.reserveRegisters(@intCast(idx_storage.local + 1));
+        }
+
         try self.compile(body, true);
         try self.releaseRegister();
 
@@ -1432,21 +1443,49 @@ pub const Compiler = struct {
         try self.emit(.ret, 1);
     }
 
+    test "match guards" {
+        try lang.testing.top_number(
+            \\ match 2
+            \\ | x when x <= 2 55
+            \\ | x x
+        , 55);
+    }
+
+    test "fibonacci w/ match guards" {
+        try lang.testing.top_number(
+            \\ fn frec(n) match n
+            \\ | x when x < 2 x
+            \\ | x frec(x - 1) + frec(x - 2)
+            \\
+            \\ frec(5)
+        , 5);
+    }
+
     fn compileMatch(
         self: *Compiler,
         subject: *const Node,
         arms: []const ast.MatchArm,
     ) InternalLowerError!void {
-        // match gets its own scope for the subject var
+        const state = self.currentFunctionState() orelse
+            return self.fail(.UnsupportedSyntax, subject, "match requires function scope");
+
+        // to restore after match
+        // TODO: this also means you cant define globals from within matches
+        //       i am genuinely surprised this doesnt break defining globals from arms
+        //
+        const saved_next_slot = state.next_slot;
+
+        // single scope for whole match's subject
         try self.pushScope();
         errdefer self.popScope();
 
-        const subject_name = try self.nextTemp("__match");
+        const subject_name = try self.nextTemp("__match_subject");
         const subject_slot = try self.declareLocal(subject_name, false);
         try self.compile(subject, true);
         self.markLocalInitialized(subject_slot);
         try self.emit(.bind_local, subject_slot);
         self.reserveLocalSlots();
+
         const arm_base_registers = self.active_registers;
         const subject_storage: VarStorage = .{ .local = subject_slot };
 
@@ -1455,15 +1494,15 @@ pub const Compiler = struct {
 
         for (arms) |arm| {
             self.active_registers = arm_base_registers;
-            if (arm.matchers.len != 1)
-                return self.fail(.UnsupportedSyntax, subject, "match arms currently support one matcher");
+
+            // each arm gets its own lex scope for pattern variables
+            try self.pushScope();
+            errdefer self.popScope();
+
             const matcher_expr: ?*const Node = switch (arm.matchers[0]) {
                 .wildcard => null,
                 .expr => |e| e,
             };
-
-            try self.pushScope();
-            errdefer self.popScope();
 
             const fail_jumps = try self.compilePatternChecks(subject_storage, matcher_expr);
             var fail_list = try std.ArrayList(usize).initCapacity(self.alloc, fail_jumps.len + 1);
@@ -1477,22 +1516,48 @@ pub const Compiler = struct {
                 const guard_jump = try self.emitJump(.jump_if_false);
                 try fail_list.append(self.alloc, guard_jump);
             }
-            // always reset active_registers before body compilation to make it very very sure
-            // all arms alloc their result in the same reg pos
+
+            // prep for body compile
             self.active_registers = arm_base_registers;
             try self.compile(arm.then, true);
+
             const end_jump = try self.emitJump(.jump);
             try end_jumps.append(self.alloc, end_jump);
+
+            // needs to happen before patching jumps so that pattern vars go out of scope
             self.popScope();
+
+            const next_arm = self.instructions.items.len;
             for (fail_list.items) |jump_idx| {
-                self.patchJump(jump_idx);
+                self.patchJumpToLabel(jump_idx, next_arm);
             }
         }
-
         self.popScope();
+
+        // so that neighbouring code gets fresh slot numbers
+        state.next_slot = saved_next_slot;
+
+        // default case & success patches
         self.active_registers = arm_base_registers;
         try self.emitNil();
-        for (end_jumps.items) |jump_idx| self.patchJump(jump_idx);
+        for (end_jumps.items) |jump_idx| {
+            self.patchJump(jump_idx);
+        }
+
+        self.active_registers = arm_base_registers + 1;
+    }
+
+    fn patchJumpToLabel(self: *Compiler, jump_idx: usize, target: usize) void {
+        self.instructions.items[jump_idx].bx = @intCast(target);
+    }
+
+    fn reserveRegisters(self: *Compiler, min_register: Register) void {
+        const min_slot: LocalSlot = @intCast(min_register);
+        if (self.currentFunctionState()) |state| {
+            if (state.next_slot < min_slot) state.next_slot = min_slot;
+        }
+        if (self.active_registers < min_slot) self.active_registers = min_slot;
+        if (self.max_registers < min_slot) self.max_registers = min_slot;
     }
 
     fn bindMatchPattern(
@@ -1556,10 +1621,6 @@ pub const Compiler = struct {
             },
             else => {},
         }
-    }
-
-    test "compiler pattern matching doesnt match bullshit" {
-        try testing.top_true(":true");
     }
 
     fn compilePatternChecks(
