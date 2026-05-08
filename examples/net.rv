@@ -1,5 +1,17 @@
 let server = net.listen(8765):unwrap()
 
+let server = net.listen(8765) # (:ok, server)
+# (:ok, server)
+# but if it errored it returns (:err, :SrvErr) or something
+let (ok, server) = net.listen(8765) # destructure
+
+if (!ok)
+	panic("cant make server")
+
+let server = net.listen(8765):unwrap()
+# unwrap(): server just gives you the value if succeeded
+# otherwise panics with the error value
+
 while :true do
     let peer = server:accept():unwrap()
     let msg = peer:recv(256):unwrap()

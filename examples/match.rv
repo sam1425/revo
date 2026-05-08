@@ -4,3 +4,11 @@ fn frec(n) match n
 	| x frec(x - 1) + frec(x - 2)
 
 print(frec(20))
+
+let f = match os.open("./readme.md")
+| (:ok, file) file
+| (:err, error) do
+	match error
+	| :FileDNE panic("file does not exist")
+	| x panic("other error: ", x)
+end
