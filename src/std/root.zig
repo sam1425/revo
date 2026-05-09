@@ -641,8 +641,13 @@ pub fn chan_recv(args: []const Data, vm: *VM) !NativeResult {
 /// errors on other types
 pub fn tonumber(args: []const Data, vm: *VM) !NativeResult {
     return switch (args[0]) {
-        .number => .{ .ok = args[0] },
-        .string => |id| .{ .ok = Data.new.num(try std.fmt.parseFloat(f64, vm.stringValue(id))) },
+        .number => .Ok(vm, args[0]),
+        .string => |id| {
+            const parsed = std.fmt.parseFloat(f64, vm.stringValue(id)) catch |err| {
+                return .Err(vm, @errorName(err));
+            };
+            return .Ok(vm, Data.new.num(parsed));
+        },
         else => .errType(0, "number, string", @tagName(args[0])),
     };
 }
@@ -1073,10 +1078,12 @@ pub fn typeUtils(vm: *VM) !void {
     inline for (@typeInfo(Data).@"union".fields) |field| {
         const func = struct {
             fn is_of(args: []const Data, _: *VM) !NativeResult {
-                return switch (args[0]) {
-                    @field(revo.memory.Type, field.name) => .okBool(true),
-                    else => .okBool(false),
-                };
+                for (args) |arg| {
+                    if (arg != @field(revo.memory.Type, field.name)) {
+                        return .okBool(false);
+                    }
+                }
+                return .okBool(true);
             }
         }.is_of;
         const id = try vm.functions.create(.{ .native = define(
@@ -1088,10 +1095,10 @@ pub fn typeUtils(vm: *VM) !void {
     }
     const is_number = struct {
         fn num(args: []const Data, _: *VM) !NativeResult {
-            return .okBool(switch (args[0]) {
-                .number => true,
-                else => false,
-            });
+            for (args) |arg| {
+                if (arg != .number) return .okBool(false);
+            }
+            return .okBool(true);
         }
     }.num;
     const id = try vm.functions.create(.{ .native = define(&[_]TypeSpec{.number}, is_number) });
@@ -1151,4 +1158,3 @@ test "stdlib json time and string modules are exposed" {
     try testing.top_true("time.now() > 0");
     try testing.top_number("len(string.split(\"a,b\", \",\"))", 2);
 }
-
