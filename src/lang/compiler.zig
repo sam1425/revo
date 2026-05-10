@@ -1737,7 +1737,7 @@ pub const Compiler = struct {
         items: []const StructItem,
     ) InternalLowerError!void {
         // always in synth toplevel __main, so always declare local
-        const ctor_slot = try self.reuseOrDeclareLocal(name, false);
+        const descriptor_slot = try self.reuseOrDeclareLocal(name, false);
 
         const fields_id = try self.compileStructFieldTable(items, .fields);
         const defaults_id = try self.compileStructFieldTable(items, .defaults);
@@ -1787,10 +1787,11 @@ pub const Compiler = struct {
             },
         };
 
-        try self.compileStructConstructor(name, descriptor_sym);
-        self.markLocalInitialized(ctor_slot);
+        // __call mm for the desc bound to struct name
+        try self.emit(.load_global, descriptor_sym);
+        self.markLocalInitialized(descriptor_slot);
         try self.duplicateRegister();
-        try self.emit(.bind_local, ctor_slot);
+        try self.emit(.bind_local, descriptor_slot);
     }
 
     const StructFieldTableKind = enum {
@@ -1867,61 +1868,6 @@ pub const Compiler = struct {
             .hash => |s| Data.new.atom(try self.vm.internAtom(s)),
             else => return self.fail(.UnsupportedSyntax, node, "struct defaults must be constant values"),
         };
-    }
-
-    fn compileStructConstructor(
-        self: *Compiler,
-        name: []const u8,
-        descriptor_sym: revo.AtomID,
-    ) InternalLowerError!void {
-        const jump_over = try self.emitJump(.jump);
-        const body_addr: ProgramCounter = @intCast(self.instructions.items.len);
-        const caller_registers = self.active_registers;
-        const caller_max_registers = self.max_registers;
-
-        var state = try FunctionState.init(self.alloc);
-        const local: LocalVar = .{ .name = "init", .slot = 0, .mutable = true, .initialized = true };
-        try state.locals.append(self.alloc, local);
-        try state.all_locals.append(self.alloc, local);
-        state.next_slot = 1;
-        self.functions.append(self.alloc, state) catch |err| {
-            state.deinit(self.alloc);
-            return err;
-        };
-
-        const prev_in_loop = self.in_loop_depth;
-        self.in_loop_depth = 0;
-        defer self.in_loop_depth = prev_in_loop;
-
-        self.active_registers = 1;
-        self.max_registers = 1;
-
-        try self.emit(.load_global, try self.vm.internAtom("@struct_new"));
-        try self.emit(.load_global, descriptor_sym);
-        try self.emit(.load_local, 0);
-        try self.emit(.call, 2);
-        try self.emit(.ret, 1);
-
-        const fn_register_count = self.max_registers;
-        self.active_registers = caller_registers;
-        self.max_registers = caller_max_registers;
-
-        var finished = self.functions.pop().?;
-        defer finished.deinit(self.alloc);
-        const const_locals = try self.collectConstLocals(finished.all_locals.items);
-        defer self.alloc.free(const_locals);
-
-        self.patchJump(jump_over);
-        const proto_id = try self.vm.functions.createPrototype(.{
-            .addr = body_addr,
-            .arity = 1,
-            .register_count = @intCast(fn_register_count),
-            .name = name,
-            .upvalue_specs = finished.upvalues.items,
-            .const_locals = const_locals,
-            .const_local_bits = &.{},
-        });
-        try self.emit(.closure, proto_id);
     }
 
     //

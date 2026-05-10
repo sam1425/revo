@@ -968,6 +968,50 @@ fn callRegister(self: *VM, instr: Instruction) EvalError!void {
     else
         revo.core_atoms.data(.missing);
 
+    // try __call mm on non-fn callees
+    if (callee == .table) {
+        // branch check explicit __call mm
+        if (try self.getMetamethodByAtom(callee, revo.core_atoms.atom_id(.__call))) |mm| {
+            self.perf.metamethod_calls += 1;
+            const args_start = callee_slot + 1;
+            const args_end = args_start + argc;
+            try self.ensureAbsoluteSlot(args_end);
+            const args = self.currentFiber().slots.items[args_start..args_end];
+
+            var call_args = try self.runtime.alloc.alloc(Data, args.len + 1);
+            defer self.runtime.alloc.free(call_args);
+            call_args[0] = callee;
+            @memcpy(call_args[1..], args);
+
+            const result = try self.callFunction(mm, call_args);
+            try self.writeRegister(instr.c, result);
+            return;
+        }
+
+        // check if this is a struct desc (has __fields key)
+        const table_id = callee.table;
+        const table = try self.tables.get(table_id);
+        if (table.getRaw(.{ .atom = try self.internAtom("__fields") })) |_| {
+            // if so call @struct_new
+            const struct_new_atom = try self.internAtom("@struct_new");
+            if (self.globals.get(struct_new_atom)) |struct_new_fn| {
+                const args_start = callee_slot + 1;
+                const args_end = args_start + argc;
+                try self.ensureAbsoluteSlot(args_end);
+                const args = self.currentFiber().slots.items[args_start..args_end];
+
+                var call_args = try self.runtime.alloc.alloc(Data, args.len + 1);
+                defer self.runtime.alloc.free(call_args);
+                call_args[0] = callee;
+                @memcpy(call_args[1..], args);
+
+                const result = try self.callFunction(struct_new_fn, call_args);
+                try self.writeRegister(instr.c, result);
+                return;
+            }
+        }
+    }
+
     // callee must be a function
     const func = switch (callee) {
         .function => |id| try self.functions.get(id),
@@ -1032,6 +1076,7 @@ fn callRegister(self: *VM, instr: Instruction) EvalError!void {
             };
             switch (result) {
                 .ok => |data| try self.writeRegister(instr.c, data),
+                // maybe push err tpl here instead
                 .err => |err| {
                     switch (err) {
                         .wrong_arity => |info| {

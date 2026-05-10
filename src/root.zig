@@ -175,6 +175,7 @@ pub const core_atoms = enum(AtomID) {
     __len,
     __tostring,
     __debug,
+    __call,
 
     pub const lastFalse = @intFromEnum(@This().false);
 
