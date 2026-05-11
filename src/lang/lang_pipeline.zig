@@ -1,19 +1,9 @@
 pub const default_macro_source =
-    \\const try! = macro `(%what:expr)`
-    \\  `match (%what) | (:ok, v) v | (:err, e) panic(e) | invalid panic(fmt("tried unwrapping %s", invalid))`
-    \\const unless! = macro `(%cond:expr %body:expr)` `if %cond nil else %body`
-    \\const do_all! = macro `(%ITEMS(%item:expr)*)` `do %ITEMS(%item) nil end`
-    \\const all_true! = macro `(%ITEMS(%item:expr)*)` `do :true %ITEMS(and (%item and :true)) end`
-    \\const sum_all! = macro `(%first:expr %REST(%item:expr)*)` `%first %REST(+ %item)`
-    \\const tuple_fst! = macro `(%first:expr %REST(%item:expr)*)` `%first`
     \\const ok? = macro `(%what:expr)` `%what[0] == :ok`
     \\const err? = macro `(%what:expr)` `%what[0] == :err`
     \\const some? = macro `(%what:expr)` `%what[0] == :some`
     \\const none? = macro `(%what:expr)` `%what == :none or %what[0] == :none`
-    \\const ok! = macro `(%what:expr)` `(:ok, %what)`
-    \\const err! = macro `(%what:expr)` `(:err, %what)`
-    \\const some! = macro `(%what:expr)` `(:some, %what)`
-    \\const println! = macro `(%fmt:str %ARGS(, %arg:expr)*)` `(print(fmt(%fmt %ARGS(, %arg))))`
+    \\const print! = macro `(%fmt:str %ARGS(, %arg:expr)*)` `(print(fmt(%fmt %ARGS(, %arg))))`
 ;
 
 pub fn build(vm: *VM, source: Source, opts: BuildOptions) !BuildResult {

@@ -178,23 +178,9 @@ pub fn resultTuple(vm: *VM, comptime tag: ResultTag, value: Data) !NativeResult 
     return .okData(Data.new.tuple(try vm.tuples.create(&items)));
 }
 
-pub fn maybeTuple(vm: *VM, value: ?Data) !NativeResult {
-    if (value) |v| {
-        return .okData(Data.new.tuple(try vm.tuples.create(&[_]Data{
-            revo.core_atoms.data(.some),
-            v,
-        })));
-    } else return .okData(revo.core_atoms.data(.none));
-}
-
 pub fn okAtom(vm: *VM) NativeResult {
     _ = vm;
     return .{ .ok = revo.core_atoms.data(.ok) };
-}
-
-pub fn noneAtom(vm: *VM) NativeResult {
-    _ = vm;
-    return .{ .ok = revo.core_atoms.data(.none) };
 }
 
 pub fn resultTag(vm: *VM, comptime tag: ResultTag) !mem.AtomID {

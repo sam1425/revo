@@ -90,8 +90,8 @@ compiles scripts to bytecode and tries to take full advantage of that
 const name = comp read()
 
 # macros are expanded at compile time and are zero-cost
-const println! = macro `(%fmt:str %ARGS(, %arg:expr)*)` `(print(fmt(%fmt %ARGS(, %arg))))`
-println!("hi, %v", name)
+const print! = macro `(%fmt:str %ARGS(, %arg:expr)*)` `(print(fmt(%fmt %ARGS(, %arg))))`
+print!("hi, %v", name)
 
 # these are runtime for now, but will become comptime when a type system exists
 struct Counter {

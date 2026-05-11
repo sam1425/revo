@@ -118,7 +118,7 @@ fn insert(args: []const Data, vm: *VM) !NativeResult {
         try table.array.append(vm.runtime.alloc, val);
     }
 
-    return root.okAtom(vm);
+    return .{ .ok = revo.core_atoms.data(.ok) };
 }
 
 /// > table:remove(pos: number) -> any
@@ -316,7 +316,7 @@ fn merge(args: []const Data, vm: *VM) !NativeResult {
 }
 
 /// > table:get(key: any) -> tuple
-/// gets value by key with metamethod support
+/// gets value by key as a Maybe
 fn get(args: []const Data, vm: *VM) !NativeResult {
     if (args.len != 2) return .errArity(args.len, 2);
     const id = switch (args[0]) {
@@ -325,7 +325,13 @@ fn get(args: []const Data, vm: *VM) !NativeResult {
     };
     const t = vm.tables.get(id) catch return .errType(0, "table", dataToString(args[0]));
     const res = try t.get(args[1], vm);
-    return root.maybeTuple(vm, res);
+    if (res) |v| {
+        return .okData(Data.new.tuple(try vm.tuples.create(&[_]Data{
+            revo.core_atoms.data(.some),
+            v,
+        })));
+    }
+    return .okData(revo.core_atoms.data(.none));
 }
 
 /// > rawget(table: table, key: any) -> any

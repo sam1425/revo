@@ -86,19 +86,12 @@ the fundamental types are:
 
     for this reason, the language does not have exceptions/errors and uses
     (:err, :ErrorName) and (:ok, value) together with pattern matching, `?`, `orelse`, `:unwrap()`,
-    and macros to handle errors. toplevel `?` panics instead of returning silently. there are
-    helpers to construct and check these:
+    and `ok?`/`err?` to handle errors. toplevel `?` panics instead of returning silently. there are
+    helpers to check these:
+
     ```ruby
-    ok!(42)             # (:ok, 42)
-    err!(:FileNotFound) # (:err, :FileNotFound)
-    ok?(ok!(42))        # :true
-    err?(err!(:Bad))    # :true
-
-    some!(42)           # (:some, 42)
-    (:none,)           # the none value
-    some?(some!(42))    # :true
-    none?((:none,))    # :true
-
+    ok?((:ok, 42))      # :true
+    err?((:err, :Bad))  # :true
     ok(42):unwrap()    # 42  (panics on :err)
     (:err, :bad)?      # panics at toplevel
     (:err, :bad) orelse 0

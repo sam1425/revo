@@ -52,17 +52,17 @@ pub fn is_error(args: []const Data, vm: *VM) NativeResult {
 
 pub fn error_tag(args: []const Data, vm: *VM) NativeResult {
     if (!root.expectArity(args, 1)) return .errArity(args.len, 1);
-    const tag = root.tupleTag(args[0], vm) orelse return .{ .ok = root.noneAtom(vm) };
+    const tag = root.tupleTag(args[0], vm) orelse return .{ .ok = revo.core_atoms.data(.none) };
     const ok_tag = try root.resultTag(vm, .ok);
     const err_tag = try root.resultTag(vm, .err);
-    if (tag == ok_tag or tag == err_tag) return .{ .ok = root.noneAtom(vm) };
+    if (tag == ok_tag or tag == err_tag) return .{ .ok = revo.core_atoms.data(.none) };
     return .{ .ok = .{ .atom = tag } };
 }
 
 pub fn error_payload(args: []const Data, vm: *VM) NativeResult {
     if (!root.expectArity(args, 1)) return .errArity(args.len, 1);
-    const tuple = root.asErrorTuple(args[0], vm) orelse return .{ .ok = root.noneAtom(vm) };
-    if (tuple.items.len <= 1) return .{ .ok = root.noneAtom(vm) };
+    const tuple = root.asErrorTuple(args[0], vm) orelse return .{ .ok = revo.core_atoms.data(.none) };
+    if (tuple.items.len <= 1) return .{ .ok = revo.core_atoms.data(.none) };
     if (tuple.items.len == 2) return .{ .ok = tuple.items[1] };
     return .{ .ok = .{ .tuple = try vm.tuples.create(tuple.items[1..]) } };
 }
@@ -75,13 +75,13 @@ pub fn error_message(args: []const Data, vm: *VM) NativeResult {
         .ok => |p| switch (p) {
             .table => |id| blk: {
                 const table = vm.tables.get(id) catch return .errType(0, "table", "invalid table");
-                const value = (try table.get(.{ .atom = try vm.internAtom("message") }, vm)) orelse break :blk root.noneAtom(vm);
+                const value = (try table.get(.{ .atom = try vm.internAtom("message") }, vm)) orelse break :blk revo.core_atoms.data(.none);
                 break :blk switch (value) {
                     .string => .{ .ok = value },
-                    else => .{ .ok = root.noneAtom(vm) },
+                    else => .{ .ok = revo.core_atoms.data(.none) },
                 };
             },
-            else => .{ .ok = root.noneAtom(vm) },
+            else => .{ .ok = revo.core_atoms.data(.none) },
         },
     };
 }
