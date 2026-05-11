@@ -1209,6 +1209,29 @@ fn returnRegister(self: *VM, instr: Instruction) EvalError!void {
     try self.closeUpvalues(frame.base);
     self.currentFiber().pc = frame.return_addr;
 
+    // check if returning to the exit frame (only one frame left after pop)
+    const returning_to_exit = self.sched.current_fiber == 0 and self.currentFiber().frames.items.len == 1;
+
+    // toplevel :err tuple should panic
+    if (returning_to_exit and result == .tuple) {
+        const tuple = try self.tuples.get(result.tuple);
+        if (tuple.items.len >= 1) {
+            const tag = tuple.items[0];
+            if (tag == .atom and tag.atom == revo.core_atoms.atom_id(.err)) {
+                if (tuple.items.len >= 2) {
+                    var buf = try std.ArrayList(u8).initCapacity(self.runtime.alloc, 16);
+                    defer buf.deinit(self.runtime.alloc);
+                    tuple.items[1].write(&buf, self, .display) catch |err| switch (err) {
+                        error.OutOfMemory => return error.OutOfMemory,
+                        else => return error.Panic,
+                    };
+                    try self.setPanicMessage(buf.items);
+                }
+                return error.Panic;
+            }
+        }
+    }
+
     if (self.currentFiber().frames.items.len == 0 or self.currentFiber().pc >= self.currentFiber().program.len) {
         const finished_id = self.sched.current_fiber;
         try self.sched.finishFiber(self.runtime.alloc, finished_id, result);
