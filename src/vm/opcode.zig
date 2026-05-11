@@ -98,6 +98,11 @@ pub const Opcode = enum(u8) {
     /// advances current up to bx times, stops early if past limit
     /// returns actual iterations completed in R[a]
     range_for,
+    /// R[a] is (:ok, x)? extract x into R[a]; or (:err, e)? ret; otherwise pass through
+    /// bx = 0: propagate errors
+    /// bx = 1: dont propagate
+    unwrap_result,
+    jump_if_not_nil_and_not_err,    // if not nil and not (:err, ...), jump to bx
 };
 
 pub const Instruction = struct {

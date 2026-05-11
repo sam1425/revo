@@ -233,6 +233,7 @@ pub const Compiler = struct {
     fn compileRoot(self: *Compiler, expr: *const Node) InternalLowerError!void {
         try self.compileClosureBody(&.{}, expr, "__main", null);
         try self.emit(.call, 0);
+        try self.emit(.unwrap_result, 0);
         try self.emit(.halt, 0);
     }
 
@@ -391,14 +392,21 @@ pub const Compiler = struct {
                     "range literals only go in forloops for now",
                 );
             },
-
-            // .range_literal => |r| {
-            //     try self.emitConst(Data{ .atom = self.vm.core_atoms.range });
-            //     try self.compile(r.start, true);
-            //     try self.compile(r.step, true);
-            //     try self.compile(r.end, true);
-            //     try self.emit(.tuple_new, 4);
-            // },
+            .try_expr => |expr_ptr| {
+                // try unwrap checks if result is error tuple and returns early if so
+                // otherwise unwraps (:ok, x) to x
+                try self.compile(expr_ptr, true);
+                try self.emit(.unwrap_result, 0); // bx=0 for propagate errors
+            },
+            .orelse_expr => |v| {
+                // compile left if it's error or nil use right
+                try self.compile(v.left, true);
+                const fail_jump = try self.emitJump(.jump_if_not_nil_and_not_err);
+                try self.compile(v.right, true);
+                self.patchJump(fail_jump);
+                // unwrap (:ok, x) to x if it got here
+                try self.emit(.unwrap_result, 1); // bx=1 for dont propagate errors
+            },
             //
             // tech debt
             //
@@ -2193,6 +2201,18 @@ pub const Compiler = struct {
             .range_for => {
                 if (depth < 3) return error.InvalidBytecode;
                 instr = .{ .op = .range_for, .a = try reg(depth - 3), .b = try reg(depth - 2), .c = try reg(depth - 1) };
+            },
+            .unwrap_result => {
+                // if TOS is (:err, ...) and bx=0, return early
+                // if TOS is (:ok, x), extract x; otherwise no-op
+                if (depth == 0) return error.InvalidBytecode;
+                instr = .{ .op = .unwrap_result, .a = try reg(depth - 1), .bx = operand };
+            },
+            .jump_if_not_nil_and_not_err => {
+                // if tos is not nil and not (:err, ...), jump
+                if (depth == 0) return error.InvalidBytecode;
+                instr = .{ .op = .jump_if_not_nil_and_not_err, .a = try reg(depth - 1), .bx = operand };
+                depth -= 1;
             },
         }
 

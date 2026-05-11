@@ -198,6 +198,8 @@ pub const Expr = union(enum) {
     struct_def: struct { name: []const u8, items: []StructItem },
     pipe_expr: struct { left: *Node, right: *Node },
     proc_macro: struct { name: []const u8, param: FnParam, body: *Node },
+    try_expr: *Node, // expr?
+    orelse_expr: struct { left: *Node, right: *Node }, // expr orelse 42
 };
 
 pub const Node = struct {
@@ -478,6 +480,20 @@ pub const Node = struct {
                         try entry.value.printAt(writer, child(depth));
                     }
                 }
+                try close(writer, depth);
+            },
+            .try_expr => |expr| {
+                try writer.writeAll("(try");
+                try sep(writer, depth, 1);
+                try expr.printAt(writer, child(depth));
+                try close(writer, depth);
+            },
+            .orelse_expr => |binary| {
+                try writer.writeAll("(orelse");
+                try sep(writer, depth, 1);
+                try binary.left.printAt(writer, child(depth));
+                try sep(writer, depth, 1);
+                try binary.right.printAt(writer, child(depth));
                 try close(writer, depth);
             },
         }

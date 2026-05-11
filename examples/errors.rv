@@ -1,0 +1,23 @@
+## 
+errors in revo
+##
+let (good, bad) = ((:ok, "asdf"), (:err, :Boom))
+
+# they all panic
+(:err, 42)?
+(:err, 42) |> @try
+@try((:err, 42))
+tonumber("a")?
+
+# there are all equal to 42
+# TODO: add good and_then patterns
+(:err, "e") orelse 42
+(:ok, 42) orelse 67
+:nil orelse 42
+
+# this one returns an error if file does not exist
+# then tries to read it
+const contents = fs.open("readme.md")?:read() orelse "default content"
+contents:split("\n")
+	|> len
+	|> print("lines")

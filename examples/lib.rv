@@ -1,0 +1,22 @@
+struct Version {
+	major: number,
+	minor: number,
+	fn is_beta(self) self.major < 1,
+	fn of_string(str) do
+		const res = str:split(".")
+			|> map(fn(c) tonumber(c))
+		# res is still three tuples
+
+		return (:ok, Version{major = res[0]?, minor = res[1]?})
+	end,
+	fn to_string(self) fmt("%v.%v", self.major, self.minor)
+}
+
+const v = Version.of_string("a.1.0")
+print(v)
+
+const content = fs.open(path)? : f do
+	f:read() orelse ""
+end
+
+asdf("readme.md")

@@ -2203,3 +2203,111 @@ test "numeric and string keys are distinct" {
         \\ t[1] + t["1"]
     , 300);
 }
+
+//
+// error propagation: ? and orelse
+//
+
+test "try ? unwraps ok tuple" {
+    try t.top_number(
+        \\ (:ok, 42)?
+    , 42);
+}
+
+test "try ? returns error tuple" {
+    try t.expectRuntimeFailureWithMessage(
+        \\ (:err, :not_found)?
+    , .Panic, ":not_found");
+}
+
+test "try ? with function call" {
+    try t.top_number(
+        \\ const f = fn() (:ok, 10)
+        \\ f()?
+    , 10);
+}
+
+test "try ? stops execution on error" {
+    try t.expectRuntimeFailureWithMessage(
+        \\ const f = fn() (:err, :not_found)
+        \\ f()?
+        \\ 99
+    , .Panic, ":not_found");
+}
+
+test "try ? chains with pipe operator" {
+    try t.top_number(
+        \\ (:ok, 5)? |> fn(x) x * 2
+    , 10);
+}
+
+test "orelse with error left side" {
+    try t.top_number(
+        \\ (:err, :fail) orelse 42
+    , 42);
+}
+
+test "orelse with ok tuple left side unwraps" {
+    try t.top_number(
+        \\ (:ok, 100) orelse 42
+    , 100);
+}
+
+test "orelse with nil left side" {
+    try t.top_number(
+        \\ :nil orelse 50
+    , 50);
+}
+
+test "orelse with normal value left side" {
+    try t.top_number(
+        \\ 10 orelse 20
+    , 10);
+}
+
+test "orelse chains" {
+    try t.top_number(
+        \\ (:err, :a) orelse (:err, :b) orelse 99
+    , 99);
+}
+
+test "orelse right side evaluates on error" {
+    try t.top_number(
+        \\ const f = fn() (:err, :no)
+        \\ f() orelse 77
+    , 77);
+}
+
+test "combined ? and orelse" {
+    try t.top_number(
+        \\ (:ok, 15)? orelse 33
+    , 15);
+}
+
+test "try ? in pattern matching" {
+    try t.top_number(
+        \\ const f = fn() (:ok, 7)
+        \\ match f()?
+        \\ | 7 100
+        \\ | _ 0
+    , 100);
+}
+
+test "error propagation stops at module level" {
+    try t.expectRuntimeFailureWithMessage(
+        \\ const f = fn() (:err, :fail)
+        \\ f()?
+    , .Panic, ":fail");
+}
+
+test "orelse unwraps after fallback" {
+    try t.top_number(
+        \\ (:err, :fail) orelse (:ok, 88)
+    , 88);
+}
+
+test "nested ok tuples? extracts inner" {
+    try t.top_type(
+        \\ (:ok, (:inner, 42))?
+    , .tuple);
+}

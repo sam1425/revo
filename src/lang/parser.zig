@@ -245,6 +245,7 @@ const Parser = struct {
                 left = try self.allocExpr(Span.merge(left.span, right.span), switch (op) {
                     .kw_and => .{ .and_expr = .{ .left = left, .right = right } },
                     .kw_or => .{ .or_expr = .{ .left = left, .right = right } },
+                    .kw_orelse => .{ .orelse_expr = .{ .left = left, .right = right } },
                     else => return error.UnexpectedToken,
                 });
                 continue;
@@ -259,6 +260,17 @@ const Parser = struct {
                     .left = left,
                     .right = right,
                 } });
+                continue;
+            }
+
+            // pf ?
+            if (op == .huh) {
+                const bp: u8 = 80;
+                if (bp < min_bp) break;
+                _ = self.advance();
+                left = try self.allocExpr(Span.merge(left.span, left.span), .{
+                    .try_expr = left,
+                });
                 continue;
             }
 
@@ -1127,6 +1139,7 @@ const logical_binding_table: LogicalBindingTable = blk: {
     var table = LogicalBindingTable.initFill(null);
     table.set(.kw_or, .{ .left = 10, .right = 11 });
     table.set(.kw_and, .{ .left = 20, .right = 21 });
+    table.set(.kw_orelse, .{ .left = 12, .right = 13 }); // keep it a bit lower than or
     break :blk table;
 };
 

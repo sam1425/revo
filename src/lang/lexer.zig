@@ -53,6 +53,7 @@ pub const TokenType = enum {
     kw_not,
     kw_comp,
     kw_proc,
+    kw_orelse,
     plus,
     minus,
     star,
@@ -76,6 +77,7 @@ pub const TokenType = enum {
     comma,
     pipe,
     pipe_forward,
+    huh,
     lparen,
     rparen,
     lbracket,
@@ -113,6 +115,7 @@ pub const TokenType = enum {
         .{ "and", .kw_and },
         .{ "or", .kw_or },
         .{ "not", .kw_not },
+        .{ "orelse", .kw_orelse },
     });
 };
 
@@ -315,6 +318,7 @@ const Lexer = struct {
                 self.makeToken(.dotdot, start, self.pos, line, column)
             else
                 self.makeToken(.dot, start, self.pos, line, column),
+            '?' => self.makeToken(.huh, start, self.pos, line, column),
             else => {
                 if (std.ascii.isDigit(c)) return self.lexNumber(start, line, column);
                 if (isIdentStart(c)) return self.lexIdent(start, line, column);
