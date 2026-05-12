@@ -19,7 +19,7 @@ const USAGE =
     \\  -b               compile script to bytecode (.rvo)
     \\  -o path          output path for -b (default: input with .rvo extension)
     \\  --test           run test blocks
-    \\  --bench          run with performance counters
+    \\  --bench[n]       run with performance counters ([n] iterations, 1 if not specified)
     \\  --dis            show bytecode disassembly instead of running
     \\  -h, --help       show this help message
     \\  --version        show version
@@ -35,21 +35,39 @@ const USAGE =
     \\  revo --dis script.rv           show bytecode disassembly
     \\
     \\revo uses a modified version of the GPLv3, refer to LICENSE.md
-    \\https://gills.pages.dev/revo/LICENSE.txt; sha256:415d4cce
+    \\https://codeberg.org/lung/revo/LICENSE.txt; sha256:415d4cce
 ;
 
-fn printPrettyError(init: std.process.Init, comptime fmt: []const u8, args: anytype) void {
-    var buf = std.Io.Writer.Allocating.init(init.gpa);
-    defer buf.deinit();
-    pretty.printError(init.gpa, &buf.writer, fmt, args) catch return;
-    std.debug.print("{s}", .{buf.written()});
-}
+const ExecutionMode = enum { run, bench, disassemble, compile };
 
-fn printPrettySuccess(init: std.process.Init, comptime fmt: []const u8, args: anytype) void {
-    var buf = std.Io.Writer.Allocating.init(init.gpa);
-    defer buf.deinit();
-    pretty.printSuccess(init.gpa, &buf.writer, fmt, args) catch return;
-    std.debug.print("{s}", .{buf.written()});
+const Config = struct {
+    mode: ExecutionMode = .run,
+    inline_code: ?[]const u8 = null,
+    script_path: ?[]const u8 = null,
+    output_path: ?[]const u8 = null,
+    interactive: bool = false,
+    test_mode: bool = false,
+    bench_iters: u32 = 1,
+    echo_last: bool = false,
+};
+
+pub fn main(init: std.process.Init) void {
+    runMain(init) catch |x| switch (x) {
+        error.VmInitError,
+        error.InsufficientArgs,
+        error.InvalidArgs,
+        error.UnknownCommand,
+        error.CompilationError,
+        error.FileError,
+        error.HelpRequested,
+        error.VersionRequested,
+        => {},
+        else => |err| {
+            var stderr_buf: [256]u8 = undefined;
+            var stderr = std.Io.File.stderr().writer(init.io, &stderr_buf);
+            pretty.printErrorName(init.gpa, &stderr.interface, err) catch return;
+        },
+    };
 }
 
 fn runMain(init: std.process.Init) !void {
@@ -60,233 +78,115 @@ fn runMain(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(arena);
 
     if (args.len < 2) {
-        // not Runtime because i'm using C line editors that don't accept readers/writers
-        var vm = VM.init(.{ .alloc = init.gpa, .io = init.io }) catch |err| {
-            printPrettyError(init, "initializing vm - {}", .{err});
-            return error.VmInitError;
-        };
+        var vm = try initVM(init, init.gpa);
         defer vm.deinit();
         try repl.run(&vm, init.gpa, init);
         return;
     }
 
-    var inline_code: ?[]const u8 = null;
-    var interactive = false;
-    var script_path: ?[]const u8 = null;
-    var show_dis = false;
-    var compile_to_bytecode = false;
-    var output_path: ?[]const u8 = null;
-    var bench_mode = false;
-    var test_mode = false;
-    var bench_iters: u32 = 10;
-    var echo_last: bool = false;
-    var i: usize = 1;
+    const config = try parseArgs(init, args);
 
-    while (i < args.len) {
-        const arg = args[i];
-        if (std.mem.eql(u8, arg, "-e")) {
-            i += 1;
-            if (i >= args.len) {
-                printPrettyError(init, "-e requires an argument", .{});
-                return error.InsufficientArgs;
-            }
-            inline_code = args[i];
-        } else if (std.mem.eql(u8, arg, "-i")) {
-            interactive = true;
-        } else if (std.mem.eql(u8, arg, "-d")) {
-            echo_last = true;
-        } else if (std.mem.eql(u8, arg, "-b")) {
-            compile_to_bytecode = true;
-        } else if (std.mem.eql(u8, arg, "-o")) {
-            i += 1;
-            if (i >= args.len) {
-                printPrettyError(init, "-o requires an argument", .{});
-                return error.InsufficientArgs;
-            }
-            output_path = args[i];
-        } else if (std.mem.eql(u8, arg, "--bench")) {
-            bench_mode = true;
-        } else if (std.mem.eql(u8, arg, "--test")) {
-            test_mode = true;
-        } else if (std.mem.eql(u8, arg, "--iters")) {
-            i += 1;
-            if (i >= args.len) {
-                printPrettyError(init, "--iters requires an argument", .{});
-                return error.InsufficientArgs;
-            }
-            bench_iters = std.fmt.parseUnsigned(u32, args[i], 10) catch |err| {
-                printPrettyError(init, "invalid --iters value '{s}' - {}", .{ args[i], err });
-                return error.InvalidArgs;
-            };
-        } else if (std.mem.eql(u8, arg, "--dis")) {
-            show_dis = true;
-        } else if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
-            std.debug.print("{s}\n", .{USAGE});
-            return;
-        } else if (std.mem.eql(u8, arg, "--version")) {
-            std.debug.print("revo " ++ @import("build_options").version ++ "\n", .{});
-            return;
-        } else if (std.mem.startsWith(u8, arg, "-")) {
-            printPrettyError(init, "unknown option '{s}'", .{arg});
-            std.debug.print("{s}\n", .{USAGE});
-            return error.UnknownCommand;
-        } else {
-            script_path = arg;
-            break;
-        }
-        i += 1;
+    if (config.inline_code) |code| {
+        try runInlineCode(init, init.gpa, code, config.test_mode, config.echo_last);
+        if (!config.interactive and config.script_path == null) return;
     }
 
-    if (inline_code) |code| {
-        var vm = VM.init(.{ .alloc = init.gpa, .io = init.io }) catch |err| {
-            printPrettyError(init, "initializing vm - {}", .{err});
-            return error.VmInitError;
-        };
-        defer vm.deinit();
-
-        const build_result = revo.lang.build(
-            &vm,
-            .{ .name = "<inline>", .text = code },
-            .{ .test_mode = test_mode },
-        ) catch |err| {
-            printPrettyError(init, "compilation - {}", .{err});
-            return error.CompilationError;
-        };
-
-        const artifact = switch (build_result) {
-            .ok => |art| art,
-            .err => |lang_err| {
-                std.debug.print("lang - ", .{});
-                var buf = std.Io.Writer.Allocating.init(init.gpa);
-                defer buf.deinit();
-                revo.lang.renderError(init.gpa, &buf.writer, .{ .name = "<inline>", .text = code }, lang_err) catch |render_err| {
-                    std.debug.print("while rendering lang error - {}\n", .{render_err});
-                };
-                std.debug.print("{s}", .{buf.written()});
-                return error.CompilationError;
-            },
-        };
-        defer init.gpa.free(artifact.instructions);
-        defer init.gpa.free(artifact.spans);
-
-        if (show_dis) {
-            printDisassembly(artifact, code, false);
-        } else {
-            vm.setProgramDebugInfo(artifact.spans, code, "<inline>") catch |err| {
-                std.debug.print("debug info {}\n", .{err});
-            };
-            const run_result = try revo.module.runCompiledModuleReport(&vm, "<inline>", artifact.instructions);
-            switch (run_result) {
-                .ok => {
-                    if (echo_last) try printResult(init, &vm);
-                },
-                .err => |failure| try renderRTFailure(init, failure),
-            }
-        }
-        if (!interactive and script_path == null) return;
-    }
-
-    if (script_path) |path| {
+    if (config.script_path) |path| {
         const source = std.Io.Dir.cwd().readFileAlloc(init.io, path, arena, std.Io.Limit.unlimited) catch |err| {
-            printPrettyError(init, "{s} '{s}'", .{ @errorName(err), path });
+            printError(init, "{s} '{s}'", .{ @errorName(err), path });
             return error.FileError;
         };
 
-        // bytecode path
         if (std.mem.endsWith(u8, path, ".rvo")) {
-            if (show_dis) {
-                var vm = VM.init(.{ .alloc = init.gpa, .io = init.io }) catch |err| {
-                    printPrettyError(init, "initializing vm - {}", .{err});
-                    return error.VmInitError;
-                };
-                defer vm.deinit();
-                var deserialized = revo.bytecode.deserialize(&vm, source, init.gpa) catch |err| {
-                    printPrettyError(init, "deserializing bytecode - {}", .{err});
-                    return error.CompilationError;
-                };
-                defer deserialized.deinit();
-                printDisassembly(.{
-                    .instructions = deserialized.instructions,
-                    .spans = deserialized.spans,
-                }, "", false);
-            } else if (bench_mode) {
-                try benchBytecode(init, init.gpa, path, source, bench_iters, echo_last);
-            } else {
-                try runBytecode(init, init.gpa, path, source, echo_last);
+            switch (config.mode) {
+                .run => try runBytecode(init, init.gpa, path, source, config.echo_last),
+                .bench => try benchBytecode(init, init.gpa, path, source, config.bench_iters, config.echo_last),
+                .disassemble => {
+                    var vm = try initVM(init, init.gpa);
+                    defer vm.deinit();
+                    var deserialized = revo.bytecode.deserialize(&vm, source, init.gpa) catch |err| {
+                        printError(init, "deserializing bytecode - {}", .{err});
+                        return error.CompilationError;
+                    };
+                    defer deserialized.deinit();
+                    printDisassembly(.{
+                        .instructions = deserialized.instructions,
+                        .spans = deserialized.spans,
+                    }, "", false);
+                },
+                .compile => {
+                    printError(init, "cannot compile bytecode files", .{});
+                    return error.InvalidArgs;
+                },
             }
         } else {
-            // source path
-            if (compile_to_bytecode) {
-                try compileToBytecode(init, init.gpa, arena, path, source, output_path, test_mode);
-            } else if (show_dis) {
-                var vm = VM.init(.{ .alloc = init.gpa, .io = init.io }) catch |err| {
-                    printPrettyError(init, "initializing vm - {}", .{err});
-                    return error.VmInitError;
-                };
-                defer vm.deinit();
+            switch (config.mode) {
+                .run => try runSource(init, init.gpa, path, source, config.echo_last, config.test_mode),
+                .bench => try benchSource(init, init.gpa, path, source, config.bench_iters, config.echo_last, config.test_mode),
+                .compile => try compileToBytecode(init, init.gpa, arena, path, source, config.output_path, config.test_mode),
+                .disassemble => {
+                    var vm = try initVM(init, init.gpa);
+                    defer vm.deinit();
 
-                const build_result = revo.lang.build(&vm, .{ .name = path, .text = source }, .{ .test_mode = test_mode }) catch |err| {
-                    printPrettyError(init, "compilation error - {}", .{err});
-                    return error.CompilationError;
-                };
-                const artifact = switch (build_result) {
-                    .ok => |art| art,
-                    .err => |lang_err| {
-                        std.debug.print("lang error: ", .{});
-                        var buf = std.Io.Writer.Allocating.init(init.gpa);
-                        defer buf.deinit();
-                        revo.lang.renderError(init.gpa, &buf.writer, .{ .name = path, .text = source }, lang_err) catch |render_err| {
-                            std.debug.print("while rendering lang error - {}\n", .{render_err});
-                        };
-                        std.debug.print("{s}", .{buf.written()});
-                        return error.CompilationError;
-                    },
-                };
-                defer init.gpa.free(artifact.instructions);
-                defer init.gpa.free(artifact.spans);
-                printDisassembly(artifact, source, false);
-            } else if (bench_mode) {
-                try benchSource(init, init.gpa, path, source, bench_iters, echo_last, test_mode);
-            } else {
-                try runSource(init, init.gpa, path, source, echo_last, test_mode);
+                    const artifact = try compileSource(init, &vm, init.gpa, path, source, config.test_mode);
+                    defer init.gpa.free(artifact.instructions);
+                    defer init.gpa.free(artifact.spans);
+                    printDisassembly(artifact, source, false);
+                },
             }
         }
-        if (!interactive) return;
+        if (!config.interactive) return;
     }
 
-    var vm = VM.init(.{ .alloc = init.gpa, .io = init.io }) catch |err| {
-        std.debug.print("initializing vm - {}\n", .{err});
-        return error.VmInitError;
-    };
+    var vm = try initVM(init, init.gpa);
     defer vm.deinit();
     try repl.run(&vm, init.gpa, init);
 }
 
-pub fn main(init: std.process.Init) void {
-    runMain(init) catch |x| switch (x) {
-        error.VmInitError,
-        error.InsufficientArgs,
-        error.InvalidArgs,
-        error.UnknownCommand,
-        error.CompilationError,
-        error.FileError,
-        => {},
-        else => |err| {
-            var stderr_buf: [256]u8 = undefined;
-            var stderr = std.Io.File.stderr().writer(init.io, &stderr_buf);
-            pretty.printErrorName(init.gpa, &stderr.interface, err) catch return;
-        },
+fn printError(init: std.process.Init, comptime fmt: []const u8, args: anytype) void {
+    var buf = std.Io.Writer.Allocating.init(init.gpa);
+    defer buf.deinit();
+    pretty.printError(init.gpa, &buf.writer, fmt, args) catch return;
+    std.debug.print("{s}", .{buf.written()});
+}
+
+fn printSuccess(init: std.process.Init, comptime fmt: []const u8, args: anytype) void {
+    var buf = std.Io.Writer.Allocating.init(init.gpa);
+    defer buf.deinit();
+    pretty.printSuccess(init.gpa, &buf.writer, fmt, args) catch return;
+    std.debug.print("{s}", .{buf.written()});
+}
+
+fn initVM(init: std.process.Init, gpa: Allocator) !VM {
+    return VM.init(.{ .alloc = gpa, .io = init.io }) catch |err| {
+        printError(init, "initializing vm - {}", .{err});
+        return error.VmInitError;
     };
 }
 
-fn printRuntimeFailure(init: std.process.Init, failure: anytype, source: []const u8) void {
-    var buf = std.Io.Writer.Allocating.init(init.gpa);
+fn handleBuildError(init: std.process.Init, gpa: Allocator, source_name: []const u8, source_text: []const u8, err: anytype) void {
+    std.debug.print("build error: ", .{});
+    var buf = std.Io.Writer.Allocating.init(gpa);
     defer buf.deinit();
-    failure.render(init.gpa, &buf.writer, source) catch |render_err| {
-        printPrettyError(init, "while rendering runtime error - {}", .{render_err});
-        return;
+    revo.lang.renderError(gpa, &buf.writer, .{ .name = source_name, .text = source_text }, err) catch |render_err| {
+        printError(init, "while rendering error - {}", .{render_err});
     };
     std.debug.print("{s}", .{buf.written()});
+}
+
+fn compileSource(init: std.process.Init, vm: *VM, gpa: Allocator, source_name: []const u8, source_text: []const u8, test_mode: bool) !Artifact {
+    const build_result = revo.lang.build(vm, .{ .name = source_name, .text = source_text }, .{ .test_mode = test_mode }) catch |err| {
+        printError(init, "compilation - {}", .{err});
+        return error.CompilationError;
+    };
+
+    return switch (build_result) {
+        .ok => |art| art,
+        .err => |lang_err| {
+            handleBuildError(init, gpa, source_name, source_text, lang_err);
+            return error.CompilationError;
+        },
+    };
 }
 
 fn printResult(init: std.process.Init, vm: *VM) !void {
@@ -297,164 +197,160 @@ fn printResult(init: std.process.Init, vm: *VM) !void {
     std.debug.print("{s}", .{s});
 }
 
-fn runSource(init: std.process.Init, gpa: Allocator, path: []const u8, source: []const u8, echo_last: bool, test_mode: bool) !void {
-    var vm = VM.init(.{ .alloc = gpa, .io = init.io }) catch |err| {
-        printPrettyError(init, "initializing vm - {}", .{err});
-        return error.VmInitError;
-    };
-    defer vm.deinit();
+fn runCompiledArtifact(
+    init: std.process.Init,
+    gpa: Allocator,
+    vm: *VM,
+    name: []const u8,
+    artifact: Artifact,
+    source: []const u8,
+    echo_last: bool,
+) !void {
+    try vm.setProgramDebugInfo(artifact.spans, source, name);
 
-    const build_result = revo.lang.build(&vm, .{ .name = path, .text = source }, .{ .test_mode = test_mode }) catch |err| {
-        printPrettyError(init, "compilation - {}", .{err});
-        return error.CompilationError;
-    };
-    const artifact = switch (build_result) {
-        .ok => |art| art,
-        .err => |lang_err| {
-            std.debug.print("build", .{});
+    const run_result = try revo.module.runCompiledModuleReport(vm, name, artifact.instructions);
+    switch (run_result) {
+        .ok => if (echo_last) try printResult(init, vm),
+        .err => |failure| {
             var buf = std.Io.Writer.Allocating.init(gpa);
             defer buf.deinit();
-            try revo.lang.renderError(gpa, &buf.writer, .{ .name = path, .text = source }, lang_err);
+            failure.render(gpa, &buf.writer, source) catch |err| {
+                printError(init, "while rendering runtime error - {}", .{err});
+                return;
+            };
             std.debug.print("{s}", .{buf.written()});
-            return error.CompilationError;
         },
-    };
+    }
+}
+
+fn parseArgs(init: std.process.Init, args: []const [:0]const u8) !Config {
+    var config: Config = .{};
+    var i: usize = 1;
+
+    while (i < args.len) {
+        const arg = args[i];
+        if (std.mem.eql(u8, arg, "-e")) {
+            i += 1;
+            if (i >= args.len) {
+                printError(init, "-e requires an argument", .{});
+                return error.InsufficientArgs;
+            }
+            config.inline_code = args[i];
+            config.echo_last = true;
+        } else if (std.mem.eql(u8, arg, "-i")) {
+            config.interactive = true;
+        } else if (std.mem.eql(u8, arg, "-d")) {
+            config.echo_last = true;
+        } else if (std.mem.eql(u8, arg, "-b")) {
+            config.mode = .compile;
+        } else if (std.mem.eql(u8, arg, "-o")) {
+            i += 1;
+            if (i >= args.len) {
+                printError(init, "-o requires an argument", .{});
+                return error.InsufficientArgs;
+            }
+            config.output_path = args[i];
+        } else if (std.mem.startsWith(u8, arg, "--bench")) {
+            config.mode = .bench;
+            if (arg.len > 7) {
+                const iters = arg[7..];
+                config.bench_iters = std.fmt.parseUnsigned(u32, iters, 10) catch |err| {
+                    printError(init, "invalid --bench[n] value '{s}' - {}", .{ iters, err });
+                    return error.InvalidArgs;
+                };
+            }
+        } else if (std.mem.eql(u8, arg, "--test")) {
+            config.test_mode = true;
+        } else if (std.mem.eql(u8, arg, "-t")) {
+            config.test_mode = true;
+        } else if (std.mem.eql(u8, arg, "--dis")) {
+            config.mode = .disassemble;
+        } else if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
+            std.debug.print("{s}\n", .{USAGE});
+            return error.HelpRequested;
+        } else if (std.mem.eql(u8, arg, "--version")) {
+            std.debug.print("revo " ++ @import("build_options").version ++ "\n", .{});
+            return error.VersionRequested;
+        } else if (std.mem.startsWith(u8, arg, "-")) {
+            printError(init, "unknown option '{s}'", .{arg});
+            std.debug.print("{s}\n", .{USAGE});
+            return error.UnknownCommand;
+        } else {
+            config.script_path = arg;
+            break;
+        }
+        i += 1;
+    }
+
+    return config;
+}
+
+fn runInlineCode(init: std.process.Init, gpa: Allocator, code: []const u8, test_mode: bool, echo_last: bool) !void {
+    var vm = try initVM(init, gpa);
+    defer vm.deinit();
+
+    const artifact = try compileSource(init, &vm, gpa, "<inline>", code, test_mode);
+    defer gpa.free(artifact.instructions);
+    defer gpa.free(artifact.spans);
+
+    try runCompiledArtifact(init, gpa, &vm, "<inline>", artifact, code, echo_last);
+}
+
+fn runSource(init: std.process.Init, gpa: Allocator, path: []const u8, source: []const u8, echo_last: bool, test_mode: bool) !void {
+    var vm = try initVM(init, gpa);
+    defer vm.deinit();
+
+    const artifact = try compileSource(init, &vm, gpa, path, source, test_mode);
     defer gpa.free(artifact.instructions);
     defer gpa.free(artifact.spans);
 
     try vm.setProgramDebugInfo(artifact.spans, source, path);
 
-    const run_result = try revo.module.runCompiledModuleReport(&vm, path, artifact.instructions);
-    switch (run_result) {
-        .ok => if (echo_last) try printResult(init, &vm),
-        .err => |failure| printRuntimeFailure(init, failure, source),
-    }
+    try runCompiledArtifact(init, gpa, &vm, path, artifact, source, echo_last);
 }
 
 fn runBytecode(init: std.process.Init, gpa: Allocator, path: []const u8, bytecode_data: []const u8, echo_last: bool) !void {
-    var vm = VM.init(.{ .alloc = gpa, .io = init.io }) catch |err| {
-        printPrettyError(init, "initializing vm - {}", .{err});
-        return error.VmInitError;
-    };
+    var vm = try initVM(init, gpa);
     defer vm.deinit();
 
-    const deserialized = revo.bytecode.deserialize(&vm, bytecode_data, gpa) catch |err| {
-        printPrettyError(init, "deserializing bytecode - {}", .{err});
+    var deserialized = revo.bytecode.deserialize(&vm, bytecode_data, gpa) catch |err| {
+        printError(init, "deserializing bytecode - {}", .{err});
         return error.CompilationError;
     };
-    defer gpa.free(deserialized.instructions);
-    defer gpa.free(deserialized.spans);
+    defer deserialized.deinit();
 
     vm.setProgramDebugInfo(deserialized.spans, "", path) catch |err| {
         std.debug.print("debug info error - {}\n", .{err});
     };
 
-    const run_result = try revo.module.runCompiledModuleReport(&vm, path, deserialized.instructions);
-    switch (run_result) {
-        .ok => if (echo_last) try printResult(init, &vm),
-        .err => |failure| try renderRTFailure(init, failure),
-    }
+    try runCompiledArtifact(
+        init,
+        gpa,
+        &vm,
+        path,
+        .{ .spans = deserialized.spans, .instructions = deserialized.instructions },
+        "",
+        echo_last,
+    );
 }
 
-fn compileToBytecode(init: std.process.Init, gpa: Allocator, arena: Allocator, path: []const u8, source: []const u8, opt_output_path: ?[]const u8, test_mode: bool) !void {
-    var vm = VM.init(.{ .alloc = gpa, .io = init.io }) catch |err| {
-        printPrettyError(init, "initializing vm - {}", .{err});
-        return error.VmInitError;
-    };
-    defer vm.deinit();
-
-    const build_result = revo.lang.build(&vm, .{ .name = path, .text = source }, .{ .test_mode = test_mode }) catch |err| {
-        printPrettyError(init, "compilation error - {}", .{err});
-        return error.CompilationError;
-    };
-    const artifact = switch (build_result) {
-        .ok => |art| art,
-        .err => |lang_err| {
-            std.debug.print("lang error: ", .{});
-            var buf = std.Io.Writer.Allocating.init(gpa);
-            defer buf.deinit();
-            revo.lang.renderError(gpa, &buf.writer, .{ .name = path, .text = source }, lang_err) catch |render_err| {
-                printPrettyError(init, "rendering lang error - {}", .{render_err});
-            };
-            std.debug.print("{s}", .{buf.written()});
-            return error.CompilationError;
-        },
-    };
-    defer gpa.free(artifact.instructions);
-    defer gpa.free(artifact.spans);
-
-    const bytecode = revo.bytecode.serialize(&vm, artifact, gpa) catch |err| {
-        printPrettyError(init, "serializing bytecode - {}", .{err});
-        return error.CompilationError;
-    };
-    defer gpa.free(bytecode);
-
-    const output_path: []const u8 = if (opt_output_path) |provided|
-        provided
-    else blk: {
-        if (std.mem.endsWith(u8, path, ".rv")) {
-            const base = path[0 .. path.len - 3];
-            break :blk std.fmt.allocPrint(arena, "{s}.rvo", .{base}) catch {
-                printPrettyError(init, "output path allocation failed", .{});
-                return error.FileError;
-            };
-        } else {
-            break :blk std.fmt.allocPrint(arena, "{s}.rvo", .{path}) catch {
-                printPrettyError(init, "output path allocation failed", .{});
-                return error.FileError;
-            };
-        }
-    };
-
-    std.Io.Dir.cwd().writeFile(init.io, .{
-        .sub_path = output_path,
-        .data = bytecode,
-    }) catch |err| {
-        printPrettyError(init, "writing bytecode file '{s}' - {}", .{ output_path, err });
-        return error.FileError;
-    };
-
-    printPrettySuccess(init, "compiled to {s}", .{output_path});
-}
-
-fn benchSource(init: std.process.Init, gpa: Allocator, path: []const u8, source: []const u8, iters: u32, echo_last: bool, test_mode: bool) !void {
-    var vm = VM.init(.{ .alloc = gpa, .io = init.io }) catch |err| {
-        printPrettyError(init, "initializing vm - {}", .{err});
-        return error.VmInitError;
-    };
-    defer vm.deinit();
-
-    const build_result = revo.lang.build(&vm, .{ .name = path, .text = source }, .{ .test_mode = test_mode }) catch |err| {
-        printPrettyError(init, "compilation error - {}", .{err});
-        return error.CompilationError;
-    };
-    const artifact = switch (build_result) {
-        .ok => |art| art,
-        .err => |lang_err| {
-            std.debug.print("lang error: ", .{});
-            var buf = std.Io.Writer.Allocating.init(gpa);
-            defer buf.deinit();
-            revo.lang.renderError(gpa, &buf.writer, .{ .name = path, .text = source }, lang_err) catch |render_err| {
-                printPrettyError(init, "rendering lang error - {}", .{render_err});
-            };
-            std.debug.print("{s}", .{buf.written()});
-            return error.CompilationError;
-        },
-    };
-    defer gpa.free(artifact.instructions);
-    defer gpa.free(artifact.spans);
-
-    vm.setProgramDebugInfo(artifact.spans, source, path) catch |err| {
-        std.debug.print("debug info error - {}\n", .{err});
-    };
-
+fn benchArtifact(
+    init: std.process.Init,
+    gpa: Allocator,
+    vm: *VM,
+    name: []const u8,
+    artifact: Artifact,
+    source: []const u8,
+    iters: u32,
+    echo_last: bool,
+) !void {
     var times = try std.ArrayList(std.Io.Duration).initCapacity(gpa, iters);
     defer times.deinit(gpa);
 
     for (0..iters) |_| {
         vm.resetPerfCounters();
         const t_start = std.Io.Timestamp.now(init.io, .cpu_process);
-        const run_result = try revo.module.runCompiledModuleReport(&vm, path, artifact.instructions);
+        const run_result = try revo.module.runCompiledModuleReport(vm, name, artifact.instructions);
         const t_end = std.Io.Timestamp.now(init.io, .cpu_process);
         times.appendAssumeCapacity(t_start.durationTo(t_end));
 
@@ -465,57 +361,106 @@ fn benchSource(init: std.process.Init, gpa: Allocator, path: []const u8, source:
     }
 
     vm.resetPerfCounters();
-    const run_result = try revo.module.runCompiledModuleReport(&vm, path, artifact.instructions);
+    const run_result = try revo.module.runCompiledModuleReport(vm, name, artifact.instructions);
     switch (run_result) {
-        .ok => if (echo_last) try printResult(init, &vm),
+        .ok => if (echo_last) try printResult(init, vm),
         .err => |failure| printRuntimeFailure(init, failure, source),
     }
 
-    printBenchStats(&vm, times.items);
+    printBenchStats(vm, times.items);
+}
+
+fn benchSource(init: std.process.Init, gpa: Allocator, path: []const u8, source: []const u8, iters: u32, echo_last: bool, test_mode: bool) !void {
+    var vm = try initVM(init, gpa);
+    defer vm.deinit();
+
+    const artifact = try compileSource(init, &vm, gpa, path, source, test_mode);
+    defer gpa.free(artifact.instructions);
+    defer gpa.free(artifact.spans);
+
+    vm.setProgramDebugInfo(artifact.spans, source, path) catch |err| {
+        std.debug.print("debug info error - {}\n", .{err});
+    };
+
+    try benchArtifact(init, gpa, &vm, path, artifact, source, iters, echo_last);
 }
 
 fn benchBytecode(init: std.process.Init, gpa: Allocator, path: []const u8, bytecode_data: []const u8, iters: u32, echo_last: bool) !void {
-    var vm = VM.init(.{ .alloc = gpa, .io = init.io }) catch |err| {
-        printPrettyError(init, "initializing vm - {}", .{err});
-        return error.VmInitError;
-    };
+    var vm = try initVM(init, gpa);
     defer vm.deinit();
 
-    const deserialized = revo.bytecode.deserialize(&vm, bytecode_data, gpa) catch |err| {
-        printPrettyError(init, "deserializing bytecode - {}", .{err});
+    var deserialized = revo.bytecode.deserialize(&vm, bytecode_data, gpa) catch |err| {
+        printError(init, "deserializing bytecode - {}", .{err});
         return error.CompilationError;
     };
-    defer gpa.free(deserialized.instructions);
-    defer gpa.free(deserialized.spans);
+    defer deserialized.deinit();
 
     vm.setProgramDebugInfo(deserialized.spans, "", path) catch |err| {
         std.debug.print("debug info error - {}\n", .{err});
     };
 
-    var times = try std.ArrayList(std.Io.Duration).initCapacity(gpa, iters);
-    defer times.deinit(gpa);
+    try benchArtifact(
+        init,
+        gpa,
+        &vm,
+        path,
+        .{ .instructions = deserialized.instructions, .spans = deserialized.spans },
+        "",
+        iters,
+        echo_last,
+    );
+}
 
-    for (0..iters) |_| {
-        vm.resetPerfCounters();
-        const t_start = std.Io.Timestamp.now(init.io, .cpu_process);
-        const run_result = try revo.module.runCompiledModuleReport(&vm, path, deserialized.instructions);
-        const t_end = std.Io.Timestamp.now(init.io, .cpu_process);
-        times.appendAssumeCapacity(t_start.durationTo(t_end));
+fn compileToBytecode(init: std.process.Init, gpa: Allocator, arena: Allocator, path: []const u8, source: []const u8, opt_output_path: ?[]const u8, test_mode: bool) !void {
+    var vm = try initVM(init, gpa);
+    defer vm.deinit();
 
-        if (run_result == .err) {
-            const failure = run_result.err;
-            printRuntimeFailure(init, failure, "");
+    const artifact = try compileSource(init, &vm, gpa, path, source, test_mode);
+    defer gpa.free(artifact.instructions);
+    defer gpa.free(artifact.spans);
+
+    const bytecode = revo.bytecode.serialize(&vm, artifact, gpa) catch |err| {
+        printError(init, "serializing bytecode - {}", .{err});
+        return error.CompilationError;
+    };
+    defer gpa.free(bytecode);
+
+    const output_path: []const u8 = if (opt_output_path) |provided|
+        provided
+    else blk: {
+        if (std.mem.endsWith(u8, path, ".rv")) {
+            const base = path[0 .. path.len - 3];
+            break :blk std.fmt.allocPrint(arena, "{s}.rvo", .{base}) catch {
+                printError(init, "output path allocation failed", .{});
+                return error.FileError;
+            };
+        } else {
+            break :blk std.fmt.allocPrint(arena, "{s}.rvo", .{path}) catch {
+                printError(init, "output path allocation failed", .{});
+                return error.FileError;
+            };
         }
-    }
+    };
 
-    vm.resetPerfCounters();
-    const run_result = try revo.module.runCompiledModuleReport(&vm, path, deserialized.instructions);
-    switch (run_result) {
-        .ok => if (echo_last) try printResult(init, &vm),
-        .err => |failure| try renderRTFailure(init, failure),
-    }
+    std.Io.Dir.cwd().writeFile(init.io, .{
+        .sub_path = output_path,
+        .data = bytecode,
+    }) catch |err| {
+        printError(init, "writing bytecode file '{s}' - {}", .{ output_path, err });
+        return error.FileError;
+    };
 
-    printBenchStats(&vm, times.items);
+    printSuccess(init, "compiled to {s}", .{output_path});
+}
+
+pub fn printRuntimeFailure(init: std.process.Init, failure: anytype, source: []const u8) void {
+    var buf = std.Io.Writer.Allocating.init(init.gpa);
+    defer buf.deinit();
+    failure.render(init.gpa, &buf.writer, source) catch |render_err| {
+        printError(init, "while rendering runtime error - {}", .{render_err});
+        return;
+    };
+    std.debug.print("{s}", .{buf.written()});
 }
 
 fn printBenchStats(vm: *VM, times: []std.Io.Duration) void {
@@ -587,7 +532,6 @@ fn printDisassembly(artifact: Artifact, source: []const u8, json: bool) void {
 
         const op_name = @tagName(instr.op);
 
-        // skipping prelude ops
         if (false and std.mem.eql(u8, op_name, "jump") or
             std.mem.eql(u8, op_name, "closure") or
             std.mem.eql(u8, op_name, "call") or
@@ -661,8 +605,4 @@ fn printDisassembly(artifact: Artifact, source: []const u8, json: bool) void {
             std.debug.print(" [{d}:{d}]\n", .{ span.line, span.column });
         }
     }
-}
-
-pub fn renderRTFailure(init: std.process.Init, failure: VM.EvalFailure) !void {
-    printRuntimeFailure(init, failure, "");
 }

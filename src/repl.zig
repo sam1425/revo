@@ -150,7 +150,7 @@ pub fn run(vm: *VM, gpa: Allocator, init: std.process.Init) !void {
                 };
                 if (out.len > 0) std.debug.print("{s}", .{out});
             },
-            .err => |failure| try main.renderRTFailure(init, failure),
+            .err => |failure| main.printRuntimeFailure(init, failure, "<repl>"),
         }
         source_acc.clearRetainingCapacity();
     }
