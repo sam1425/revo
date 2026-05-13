@@ -413,9 +413,10 @@ fn absoluteRegisterIndex(self: *VM, reg: opcode.Register) !usize {
 
 fn ensureAbsoluteSlot(self: *VM, slot: usize) !void {
     const slots = &self.currentFiber().slots;
-    while (slots.items.len <= slot) {
-        try slots.append(self.runtime.alloc, revo.core_atoms.data(.missing));
-    }
+    if (slot < slots.items.len) return;
+    const old_len = slots.items.len;
+    try slots.resize(self.runtime.alloc, slot + 1);
+    @memset(slots.items[old_len..], revo.core_atoms.data(.missing));
 }
 
 fn readRegister(self: *VM, reg: opcode.Register) !Data {
