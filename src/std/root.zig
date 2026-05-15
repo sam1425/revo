@@ -32,7 +32,6 @@ pub fn register_stdlib(vm: *revo.VM) !void {
         .{ .name = "unwrap", .f = define(&[_]TypeSpec{.tuple}, try_) },
         .{ .name = "@dotest", .f = define(&[_]TypeSpec{ .string, .function }, dotest) },
         .{ .name = "@dosuite", .f = define(&[_]TypeSpec{ .string, .function }, dosuite) },
-        .{ .name = "@eval", .f = define(&[_]TypeSpec{.string}, @import("stupid.zig").eval) },
         .{ .name = "chan", .f = defineVariadic(&[_]TypeSpec{}, chan_new) },
         .{ .name = "send", .f = define(&[_]TypeSpec{ .tuple, .any }, chan_send) },
         .{ .name = "recv", .f = define(&[_]TypeSpec{.tuple}, chan_recv) },
@@ -53,6 +52,7 @@ pub fn register_stdlib(vm: *revo.VM) !void {
     try vm.setGlobal("argv", .{ .table = argv_id });
     // math
     try @import("math.zig").register(vm);
+    try @import("stupid.zig").register(vm);
     try @import("string.zig").register(vm);
     try @import("table.zig").register(vm);
     try @import("net.zig").register(vm);

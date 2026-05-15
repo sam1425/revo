@@ -293,7 +293,7 @@ pub fn deserialize(vm: *VM, data: []const u8, allocator: Allocator) !Deserialize
         try reader.readSliceAll(name);
 
         const upvalue_specs = try allocator.alloc(functions.UpvalueSpec, uv_count);
-        errdefer allocator.free(upvalue_specs);
+        defer allocator.free(upvalue_specs);
         for (upvalue_specs) |*spec| {
             spec.* = .{
                 .is_local = (try reader.takeArray(1))[0] != 0,

@@ -538,7 +538,7 @@ sleep(100)
 # stdlib modules
 
 revo ships a small set of helpful globals without imports: essentials like `print`, `read`, `cwd`,
-and `@eval`, plus a few module-style namespaces
+and `revo.eval`, plus a few module-style namespaces
 
 `fs` - file and directory access:
 ```ruby
@@ -589,9 +589,9 @@ net.close(conn)
 
 `os` - system access (read from stdin, etc.)
 
-`@eval` - evaluate a string as revo code at runtime:
+`revo.eval` - evaluate a string as revo code at runtime:
 ```ruby
-@eval("print(1 + 2)") # 3
+revo.eval("print(1 + 2)") # 3
 ```
 
 # imports

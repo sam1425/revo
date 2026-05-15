@@ -187,8 +187,8 @@ pub fn init(runtime: revo.Runtime) !VM {
     vm.sched.fibers.items[0].result = revo.core_atoms.data(.no_result);
 
     // true and t, false and f are equivalent
-    try vm.atoms.put("f", revo.core_atoms.atom_id(.false));
-    try vm.atoms.put("t", revo.core_atoms.atom_id(.true));
+    // try vm.atoms.put("f", revo.core_atoms.atom_id(.false));
+    // try vm.atoms.put("t", revo.core_atoms.atom_id(.true));
 
     try revo.std_lib.register_stdlib(&vm);
     var it = vm.globals.iterator();

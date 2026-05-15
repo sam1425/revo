@@ -1,0 +1,4 @@
+let f = fs.open("meta.rvo")?
+
+revo.build("print(2 + 2)")?
+|> fn(bc) f:write(bc)

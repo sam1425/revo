@@ -1,16 +1,27 @@
 //
-// stands for "i am stupid", or unsafe
+// for metaprogramming
 //
 
 const revo = @import("../root.zig");
 const testing = revo.lang.testing;
 const root = @import("root.zig");
+const std = @import("std");
 
 const Data = revo.Data;
 const VM = revo.VM;
 const NativeResult = root.NativeResult;
 const dataToString = root.dataToString;
 
+pub fn register(vm: *VM) !void {
+    try root.registerTableFunctions(vm, "revo", &[_]root.FuncDef{
+        .{ .name = "eval", .f = root.define(&.{.string}, eval) },
+        .{ .name = "build", .f = root.define(&.{.string}, build) },
+    });
+}
+
+/// > eval(code: string) -> !any
+/// evaluates it as a module, gives you back its' return value
+/// you can treat it as a function's body
 pub fn eval(args: []const Data, vm: *VM) !NativeResult {
     if (args.len != 1) return .errArity(args.len, 1);
 
@@ -33,9 +44,35 @@ pub fn eval(args: []const Data, vm: *VM) !NativeResult {
     };
 }
 
+/// > build(code: string) -> !any
+/// builds it as a module, gives you back its' bytecode in a string
+/// the string is only useful for writing to a file or executing
+pub fn build(args: []const Data, vm: *VM) !NativeResult {
+    const source = vm.stringValue(args[0].string);
+
+    const result = try revo.lang.build(vm, .{ .text = source, .name = "<anon>" }, .{});
+
+    switch (result) {
+        .ok => |artifact| {
+            defer vm.runtime.alloc.free(artifact.instructions);
+            defer vm.runtime.alloc.free(artifact.spans);
+
+            const bc = try revo.bytecode.serialize(vm, artifact, vm.runtime.alloc);
+            defer vm.runtime.alloc.free(bc);
+            // super slow
+            const sid = try vm.strings.own(bc);
+            return root.resultTuple(vm, .ok, .{ .string = sid });
+        },
+        .err => |err| switch (err) {
+            .lower => |e| return root.resultTuple(vm, .err, try vm.ownDataString(e.message)),
+            .parse => |e| return root.resultTuple(vm, .err, try vm.ownDataString(e.message)),
+        },
+    }
+}
+
 test "native eval works" {
     try testing.top_number(
-        \\ const (_, res) = @eval("21*2")
+        \\ const (_, res) = revo.eval("21*2")
         \\ res
     , 42);
 }

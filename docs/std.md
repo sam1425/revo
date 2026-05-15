@@ -119,8 +119,6 @@ internal, do not use pls
 ### - `@dosuite(arg0: string, arg1: function) -> NativeResult`
 internal, pls dont use. runs a test suite
 
-### - `@eval(arg0: string)`
-
 ### - `chan(capacity?: number) -> tuple`
 creates a new channel with optional buffer size
 
@@ -389,6 +387,17 @@ receives data from the socket, returns data as string
 
 ### - `socket:close() -> atom`
 closes the socket
+
+---
+# revo
+
+### - `eval(code: string) -> !any`
+evaluates it as a module, gives you back its' return value
+you can treat it as a function's body
+
+### - `build(code: string) -> !any`
+builds it as a module, gives you back its' bytecode in a string
+the string is only useful for writing to a file or executing
 
 ---
 # iter
