@@ -1,7 +1,8 @@
 <div align="center">
 <h1>revo</h1>
 
-![written in Zig](https://img.shields.io/badges/written%20in-Zig-orange)
+![written in Zig](https://img.shields.io/badge/written%20in-Zig-orange)
+![version 0.0.1a](https://img.shields.io/badge/version-0.0.1a-navy)
 
 [homepage & docs](https://gills.pages.dev/revo)
 | [github](https://github.com/if-not-nil/revo)
@@ -18,6 +19,8 @@ and the [blog](https://gills.pages.dev/revo/blog/apples/)
 # sections
 
 - [installation](#installing)
+  - [on posix systems](#on-posix-systems)
+  - [on windows](#on-windows-powershell)
 - [cli reference](#cli-reference)
   - [development](#development)
   - [credits](#credits)
@@ -27,11 +30,36 @@ and the [blog](https://gills.pages.dev/revo/blog/apples/)
 
 you will need [zig `0.16.0`](https://ziglang.org/download) to build revo
 
+## on posix systems
+
 ```bash
 git clone https://github.com/if-not-nil/revo && cd revo
 zig build -Doptimize=ReleaseFast
 cp ./zig-out/bin/revo ~/.local/bin/revo
-revo -h
+
+# verify installation
+revo --version
+```
+
+## on windows (powershell)
+
+```bash
+git clone https://github.com/if-not-nil/revo && cd revo
+zig build -Doptimize=ReleaseFast -Drepl=none
+
+mkdir "C:/tools/revo/bin"
+copy ./zig-out/bin/revo C:/tools/revo/bin
+
+# now add it to PATH by doing:
+# 1. press Win+S
+# 2. type "env" and then press enter. it should take you to the System Properties > Advanced tab
+# 3. click "Environment Variables" and then "Path" in the "System variables"
+# 4. press "new" and type "C:\tools\revo\bin", then press enter
+# 5. press OK for all of the tabs you've opened
+# after that, you have to open a new CMD/Powershell window for PATH changes to take effect
+
+# verify installation
+revo --version
 ```
 
 binary releases are not yet available
