@@ -310,6 +310,7 @@ fn runSource(init: std.process.Init, gpa: Allocator, path: []const u8, source: [
 
     try vm.setProgramDebugInfo(artifact.spans, source, path);
 
+    // std.debug.print("running\n", .{});
     try runCompiledArtifact(init, gpa, &vm, path, artifact, source, config.echo_last);
 }
 

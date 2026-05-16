@@ -199,8 +199,6 @@ pub const Expr = union(enum) {
     table: []TableEntry,
     struct_def: struct { name: []const u8, items: []StructItem },
     pipe_expr: struct { left: *Node, right: *Node },
-    pipe_ok_expr: struct { left: *Node, right: *Node },
-    pipe_err_expr: struct { left: *Node, right: *Node },
     proc_macro: struct { name: []const u8, param: FnParam, body: *Node },
     try_expr: *Node, // expr?
     orelse_expr: struct { left: *Node, right: *Node }, // expr orelse 42
@@ -286,22 +284,6 @@ pub const Node = struct {
             },
             .pipe_expr => |pipe| {
                 try writer.writeAll("(|>");
-                try sep(writer, depth, 1);
-                try pipe.left.printAt(writer, child(depth));
-                try sep(writer, depth, 1);
-                try pipe.right.printAt(writer, child(depth));
-                try close(writer, depth);
-            },
-            .pipe_ok_expr => |pipe| {
-                try writer.writeAll("(|>?");
-                try sep(writer, depth, 1);
-                try pipe.left.printAt(writer, child(depth));
-                try sep(writer, depth, 1);
-                try pipe.right.printAt(writer, child(depth));
-                try close(writer, depth);
-            },
-            .pipe_err_expr => |pipe| {
-                try writer.writeAll("(|>~");
                 try sep(writer, depth, 1);
                 try pipe.left.printAt(writer, child(depth));
                 try sep(writer, depth, 1);
@@ -745,4 +727,124 @@ test "prints break and return empty and valued forms" {
 
     try return_value.print(&buf.writer);
     try std.testing.expectEqualStrings("(return 1)", buf.written());
+}
+
+pub fn walkAST(comptime Visitor: type, visitor: *Visitor, node: *const Node) void {
+    if (@hasField(Visitor, "found") and visitor.found) return;
+
+    switch (node.expr) {
+        inline else => |payload| {
+            const ExprType = @TypeOf(payload);
+
+            if (ExprType == void or ExprType == f64 or ExprType == []const u8 or ExprType == bool) return;
+
+            if (ExprType == []*Node) {
+                for (payload) |c| {
+                    if (@hasField(Visitor, "found") and visitor.found) return;
+                    visitor.visit(c);
+                }
+                return;
+            }
+            if (ExprType == []TableEntry) {
+                for (payload) |entry| {
+                    if (@hasField(Visitor, "found") and visitor.found) return;
+                    if (entry.key) |key| visitor.visit(key);
+                    if (@hasField(Visitor, "found") and visitor.found) return;
+                    visitor.visit(entry.value);
+                }
+                return;
+            }
+
+            const type_info = @typeInfo(ExprType);
+            if (type_info != .@"struct" and type_info != .@"union") return;
+
+            inline for (std.meta.fields(ExprType)) |field| {
+                if (@hasField(Visitor, "found") and visitor.found) return;
+
+                const FieldType = field.type;
+                const value = @field(payload, field.name);
+
+                switch (FieldType) {
+                    *Node => {
+                        visitor.visit(value);
+                    },
+                    []*Node => for (value) |c| {
+                        if (@hasField(Visitor, "found") and visitor.found) return;
+                        visitor.visit(c);
+                    },
+                    ?*Node => if (value) |c| visitor.visit(c),
+                    []MatchArm => for (value) |arm| {
+                        if (@hasField(Visitor, "found") and visitor.found) return;
+                        for (arm.matchers) |matcher| visitor.visit(matcher.expr);
+                        if (@hasField(Visitor, "found") and visitor.found) return;
+                        if (arm.guard) |guard| visitor.visit(guard);
+                        if (@hasField(Visitor, "found") and visitor.found) return;
+                        visitor.visit(arm.then);
+                    },
+                    []StructItem => for (value) |item| {
+                        if (@hasField(Visitor, "found") and visitor.found) return;
+                        if (item == .binding) visitor.visit(item.binding.value) else if (item.field.default_value) |def| visitor.visit(def);
+                    },
+                    []TableEntry => for (value) |entry| {
+                        if (@hasField(Visitor, "found") and visitor.found) return;
+                        if (entry.key) |key| visitor.visit(key);
+                        if (@hasField(Visitor, "found") and visitor.found) return;
+                        visitor.visit(entry.value);
+                    },
+                    else => {},
+                }
+            }
+        },
+    }
+}
+
+const lang = @import("./root.zig");
+
+const UnderscoreVisitor = struct {
+    found: bool = false,
+
+    pub fn visit(self: *UnderscoreVisitor, node: *const Node) void {
+        if (self.found) return;
+
+        // std.debug.print("visiting: {}\n", .{node.expr});
+
+        switch (node.expr) {
+            .ident => |name| {
+                // std.debug.print("  ident: {s}\n", .{name});
+                if (std.mem.eql(u8, name, "_")) {
+                    self.found = true;
+                }
+            },
+            else => {
+                walkAST(UnderscoreVisitor, self, node);
+            },
+        }
+    }
+};
+
+fn hasUnderscore(node: *const Node) bool {
+    var visitor = UnderscoreVisitor{};
+    visitor.visit(node);
+    return visitor.found;
+}
+
+test "hasUnderscore" {
+    var alloc = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer alloc.deinit();
+    const arena = alloc.allocator();
+    var res = (try lang.parse(arena, .{ .text = "_", .name = "<>" }, .{})).ok;
+    try std.testing.expect(hasUnderscore(res.root));
+    res = (try lang.parse(arena, .{ .text = "x", .name = "<>" }, .{})).ok;
+    try std.testing.expect(!hasUnderscore(res.root));
+    res = (try lang.parse(arena, .{ .text = "(_, x)", .name = "<>" }, .{})).ok;
+    // std.debug.print("is: {s}\n\n\n\n of len {d}\n\n", .{ res.root.expr.tuple[0].expr.ident, res.root.expr.tuple[0].expr.ident.len });
+    try std.testing.expect(hasUnderscore(res.root));
+    res = (try lang.parse(arena, .{ .text = "call{_, x}", .name = "<>" }, .{})).ok;
+    try std.testing.expect(hasUnderscore(res.root));
+    res = (try lang.parse(arena, .{ .text = "(a, b)", .name = "<>" }, .{})).ok;
+    try std.testing.expect(!hasUnderscore(res.root));
+    res = (try lang.parse(arena, .{ .text = "_:meth()", .name = "<>" }, .{})).ok;
+    try std.testing.expect(hasUnderscore(res.root));
+    res = (try lang.parse(arena, .{ .text = "_ + 42", .name = "<>" }, .{})).ok;
+    try std.testing.expect(hasUnderscore(res.root));
 }

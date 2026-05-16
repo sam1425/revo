@@ -691,40 +691,76 @@ test "double pipe" {
 test "pipe into match" {
     try t.top_number(
         \\ 2
-        \\ |> match 
+        \\ |> match
         \\    | x 42
     , 42);
 }
 
-test "|>? maps ok payloads" {
+test "pipe underscore in function arg" {
+    try t.top_string(
+        \\ fn f(a, b) tostring(a) + tostring(b)
+        \\ "asdf" |> f("got", _)
+    , "gotasdf");
+}
+
+test "pipe underscore expr depth > 1" {
+    try t.top_string(
+        \\ "asdf" |> "aaa" + _:upper()
+    , "aaaASDF");
+}
+
+test "pipe underscore call depth > 1" {
+    if (true) return error.Todo;
+    try t.top_string(
+        \\ "asdf" |> fmt("aaa%s", _:upper())
+    , "aaaASDF");
+}
+
+test "pipe underscore as callee" {
+    try t.top_string(
+        \\ fn f(x)
+        \\   x:upper()
+        \\ 
+        \\ "asdf" |> f(_)
+    , "ASDF");
+}
+
+test "pipe underscore in method arg" {
     try t.top_number(
-        \\ (:ok, 20) |>? fn(x) x + 22
+        \\ const obj = { inner = 40, meth = fn(self, x) self.inner + x }
+        \\ obj |> _:meth(2)
     , 42);
 }
 
-test "|>? passes through err tuples" {
+test "pipe underscore in block" {
     try t.top_string(
-        \\ tostring((:err, :bad) |>? fn(x) x + 1)
-    , "(:err, :bad)");
+        \\ const x = "asdf"
+        \\ x |> do tostring(_) end
+    , "asdf");
 }
 
-test "|>~ maps only err tuples" {
-    try t.top_number(
-        \\ (:err, :bad) |>~ fn(v) if err?(v) 42 else 0
-    , 42);
+test "pipe underscore in chained calls" {
     try t.top_string(
-        \\ tostring((:ok, 5) |>~ fn(v) 0)
-    , "(:ok, 5)");
+        \\ const f = fn(x) x
+        \\ const a = "test"
+        \\ a |> f() |> f()
+    , "test");
 }
 
-test "result pipe chain does not require parentheses around |>? stage" {
+test "pipe underscore in method chain" {
     try t.top_number(
-        \\ const mixed =
-        \\   tonumber("no")
-        \\   |>? fn(n) n + 1
-        \\   |>~ fn(v) 0
-        \\ mixed
-    , 0);
+        \\ let a = 40
+        \\ const obj = { inner = 20, meth = fn(self) do a = a + self.inner self end }
+        \\ obj |> _:meth() |> _:meth()
+        \\ a
+    , 80);
+}
+
+test "pipe field" {
+    try t.top_number(
+        \\ const t = {5, 6 ,7}
+        \\ 1 |> t[_]
+    , 6);
 }
 
 // test "side prefix" {

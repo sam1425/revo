@@ -109,6 +109,7 @@ pub const TuplePool = struct {
 
 test "parses tuple literals and keeps paren grouping distinct" {
     try testing.expectPrinted("(1, 2, 3)", "(tuple 1 2 3)");
+    try testing.expectPrinted("(_, x)", "(tuple _ x)");
     try testing.expectPrinted("(1,)", "(tuple 1)");
     try testing.expectPrinted("(1)", "1");
     try testing.top_nil("()");

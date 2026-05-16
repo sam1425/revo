@@ -1,14 +1,5 @@
 const std = @import("std");
 
-const lang = @import("./root.zig");
-const ast = lang.ast;
-const Expr = ast.Expr;
-const Node = ast.Node;
-const Binding = ast.Binding;
-const StructField = ast.StructField;
-const StructItem = ast.StructItem;
-const expander = lang.expander;
-const testing = lang.testing;
 const revo = @import("revo");
 const Data = revo.Data;
 const Instruction = revo.Instruction;
@@ -19,6 +10,20 @@ const LocalSlot = revo.LocalSlot;
 const ProgramCounter = revo.ProgramCounter;
 const Operand = revo.Operand;
 const Register = revo.opcode.Register;
+
+const lang = @import("./root.zig");
+const ast = lang.ast;
+const Expr = ast.Expr;
+const Node = ast.Node;
+const Binding = ast.Binding;
+const StructField = ast.StructField;
+const StructItem = ast.StructItem;
+const expander = lang.expander;
+const testing = lang.testing;
+
+fn print(comptime fmt: []const u8, args: anytype) void {
+    if (comptime false) std.debug.print(fmt, args);
+}
 
 //
 // compiler result types
@@ -391,8 +396,6 @@ pub const Compiler = struct {
             // core sugar
             //
             .pipe_expr => |pipe| try self.compilePipe(pipe.left, pipe.right),
-            .pipe_ok_expr => |pipe| try self.compilePipeOk(pipe.left, pipe.right),
-            .pipe_err_expr => |pipe| try self.compilePipeErr(pipe.left, pipe.right),
             .loop_expr => |v| try self.compileLoop(v.body),
             .for_loop => |v| try self.compileFor(v.params, v.body, v.iter),
             .while_loop => |v| try self.compileWhile(v.predicate, v.body),
@@ -614,9 +617,41 @@ pub const Compiler = struct {
         , .UndefinedVariable);
     }
 
+    const UnderscoreCheckVisitor = struct {
+        found: bool = false,
+        depth: usize = 0,
+
+        pub fn visit(self: *UnderscoreCheckVisitor, node: *const Node) void {
+            // print("visit depth={d} expr={s}\n", .{ self.depth, @tagName(node.expr) });
+
+            if (self.found) return;
+
+            switch (node.expr) {
+                .ident => |name| {
+                    if (std.mem.eql(u8, name, "_")) {
+                        self.found = true;
+                        return;
+                    }
+                },
+                else => {
+                    ast.walkAST(UnderscoreCheckVisitor, self, node);
+                    // print("  else case, calling walkAST\n", .{});
+                },
+            }
+        }
+    };
+
+    fn hasUnderscore(node: *const Node) bool {
+        // print("hasunderscore start\n", .{});
+        var visitor = UnderscoreCheckVisitor{};
+        ast.walkAST(UnderscoreCheckVisitor, &visitor, node);
+        // print("hasunderscore end found={}\n", .{visitor.found});
+        return visitor.found;
+    }
+
     fn compilePipe(self: *Compiler, left: *const Node, right: *const Node) InternalLowerError!void {
         switch (right.expr) {
-            .ident, .field => {
+            .ident => {
                 try self.compile(right, true);
                 try self.compile(left, true);
                 try self.emit(.call, 1);
@@ -629,53 +664,44 @@ pub const Compiler = struct {
                 try self.compile(left, true);
                 try self.emit(.call, 1);
             },
-            .call => |call| {
-                switch (call.callee.expr) {
-                    .field => |field| {
-                        try self.compile(field.object, true);
-                        try self.emitConst(Data{ .atom = try self.vm.internAtom(field.name) });
-                        try self.compile(left, true);
-                        for (call.args) |arg| try self.compile(arg, true);
-                        const argc = (call.args.len + 1) | (@as(usize, @intFromBool(call.implicit_self)) << 15);
-                        try self.emit(.call_field, @intCast(argc));
-                    },
-                    .index => |index| {
-                        try self.compile(index.object, true);
-                        try self.compile(index.key, true);
-                        try self.compile(left, true);
-                        for (call.args) |arg| try self.compile(arg, true);
-                        const argc = (call.args.len + 1) | (@as(usize, @intFromBool(call.implicit_self)) << 15);
-                        try self.emit(.call_field, @intCast(argc));
-                    },
-                    else => {
-                        try self.compile(call.callee, true);
-                        try self.compile(left, true);
-                        for (call.args) |arg| try self.compile(arg, true);
-                        try self.emit(.call, @intCast(call.args.len + 1));
-                    },
+            .call => {
+                const call = &right.expr.call;
+                // const has_underscore = hasUnderscore(right);
+                const has_underscore = comptime false;
+                // print("has_underscore={}, about to compile right\n", .{has_underscore});
+
+                if (has_underscore) {
+                    try self.pushScope();
+
+                    errdefer self.popScope();
+                    const slot = try self.declareLocal("_", false);
+                    try self.compile(left, true);
+                    self.markLocalInitialized(slot);
+                    try self.emit(.bind_local, slot);
+                    self.reserveLocalSlots();
+                    try self.compile(right, true);
+                    self.popScope();
+                } else {
+                    // no underscore so insert left as first argument
+                    try self.compile(call.callee, true);
+                    try self.compile(left, true);
+                    for (call.args) |arg| try self.compile(arg, true);
+                    try self.emit(.call, @intCast(call.args.len + 1));
                 }
             },
-            else => return self.fail(.UnsupportedSyntax, right, "invalid pipe target"),
+            else => {
+                // other expressions is bind left to _
+                try self.pushScope();
+                errdefer self.popScope();
+                const slot = try self.declareLocal("_", false);
+                try self.compile(left, true);
+                self.markLocalInitialized(slot);
+                try self.emit(.bind_local, slot);
+                self.reserveLocalSlots();
+                try self.compile(right, true);
+                self.popScope();
+            },
         }
-    }
-
-    fn compilePipeOk(self: *Compiler, left: *const Node, right: *const Node) InternalLowerError!void {
-        try self.compile(left, true);
-        try self.emit(.unwrap_result, 1); // unwrap (:ok, x), leave (:err, e) as-is
-        try self.duplicateRegister();
-        const err_jump = try self.emitJump(.jump_if_err);
-        try self.compilePipeAtTop(right);
-        self.patchJump(err_jump);
-    }
-
-    fn compilePipeErr(self: *Compiler, left: *const Node, right: *const Node) InternalLowerError!void {
-        try self.compile(left, true);
-        try self.duplicateRegister();
-        const err_jump = try self.emitJump(.jump_if_err);
-        const end_jump = try self.emitJump(.jump);
-        self.patchJump(err_jump);
-        try self.compilePipeAtTop(right);
-        self.patchJump(end_jump);
     }
 
     fn compilePipeAtTop(self: *Compiler, right: *const Node) InternalLowerError!void {

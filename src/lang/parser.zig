@@ -249,48 +249,14 @@ const Parser = struct {
                 continue;
             }
 
-            if (op == .pipe_forward or op == .pipe_forward_ok or op == .pipe_forward_err) {
+            if (op == .pipe_forward) {
                 const bp: u8 = 15;
                 if (bp < min_bp) break;
-                // consumethe pipe token
                 _ = self.advance();
 
-                // unused in dot and hash but here for dedup
                 var right: *Node = undefined;
                 const into_what = self.peek().type;
                 switch (into_what) {
-                    // pipe into field call like `value |> .method(args)`
-                    .dot => {
-                        // consume .dot
-                        _ = self.advance();
-
-                        const method_tok = self.advance();
-                        var args: []*Node = &.{};
-                        if (self.check(.lparen)) {
-                            _ = try self.expect(.lparen);
-                            args = try self.parseDelimitedExprList(.rparen);
-                            _ = try self.expect(.rparen);
-                        }
-                        const callee = try self.allocExpr(method_tok.span(), .{
-                            .field = .{
-                                .object = left,
-                                .name = method_tok.text,
-                            },
-                        });
-                        left = try self.allocExpr(
-                            Span.merge(
-                                left.span,
-                                if (args.len > 0) args[args.len - 1].span else method_tok.span(),
-                            ),
-                            .{ .call = .{
-                                .callee = callee,
-                                .args = args,
-                                .implicit_self = false,
-                            } },
-                        );
-                        continue;
-                    },
-                    // pipe into hash method call like `value |> :method(args)`
                     .hash => {
                         const hash_tok = self.advance();
                         const method_name = hash_tok.text[1..];
@@ -316,18 +282,13 @@ const Parser = struct {
                         );
                         continue;
                     },
-                    // specialcase fns and match on rhs: `value |> fn(...) body`
-                    .kw_fn => right = try self.parseFnWithBodyMin(self.advance(), bp + 1),
-                    // and `value |> match | pat ...`
                     .kw_match => right = try self.parseMatch(self.advance(), left),
+                    .kw_fn => right = try self.parseFnWithBodyMin(self.advance(), bp + 1),
                     else => right = try self.parseExpression(bp + 1),
                 }
 
-                left = try self.allocExpr(Span.merge(left.span, right.span), switch (op) {
-                    .pipe_forward => .{ .pipe_expr = .{ .left = left, .right = right } },
-                    .pipe_forward_ok => .{ .pipe_ok_expr = .{ .left = left, .right = right } },
-                    .pipe_forward_err => .{ .pipe_err_expr = .{ .left = left, .right = right } },
-                    else => unreachable,
+                left = try self.allocExpr(Span.merge(left.span, right.span), .{
+                    .pipe_expr = .{ .left = left, .right = right },
                 });
                 continue;
             }
@@ -1178,7 +1139,7 @@ const Parser = struct {
 
     fn canContinueExpression(self: *Parser, left: *const Node) bool {
         const t = self.peek().type;
-        if (t == .dot or t == .lbracket or t == .assign or t == .dotdot or t == .pipe_forward or t == .pipe_forward_ok or t == .pipe_forward_err or t == .hash) return true;
+        if (t == .dot or t == .lbracket or t == .assign or t == .dotdot or t == .pipe_forward or t == .hash) return true;
         if (t == .plus_assign or t == .minus_assign or t == .star_assign or t == .slash_assign or t == .percent_assign) return true;
         if (logicalBindingPower(t) != null) return true;
         if (infixBindingPower(t) != null) return true;
@@ -1319,8 +1280,6 @@ const expr_start_tokens = makeTokenSet(&.{
     .minus,
     .kw_not,
     .pipe_forward,
-    .pipe_forward_ok,
-    .pipe_forward_err,
     .lparen,
     .kw_fn,
     .kw_if,
