@@ -400,9 +400,28 @@ pub const Compiler = struct {
                     expr,
                     "break is only valid inside loop",
                 );
-                // break inside a closure-based loop (function body): use return
+
+                // inline loop (compiled inside current fn) uses a loop-result
+                // register
+                //  if present, set that register and jump to the loop exit
+                if (self.loop_result_regs.items.len <= 0) return;
+
                 if (value) |v| try self.compile(v, true) else try self.emitNil();
-                try self.emit(.ret, 1);
+
+                const r = self.active_registers - 1;
+                const loop_res = self.loop_result_regs.items[self.loop_result_regs.items.len - 1];
+                const move_to_res: Instruction = .{ .op = .move, .a = try reg(loop_res), .b = try reg(r) };
+
+                try self.instructions.append(self.alloc, move_to_res);
+                try self.spans.append(self.alloc, self.active_span);
+                // expr value has to stay on the stack so surrounded expressions
+                // expressions (like if/else) see a consistent stack height
+                const move_back: Instruction = .{ .op = .move, .a = try reg(r), .b = try reg(loop_res) };
+                try self.instructions.append(self.alloc, move_back);
+                try self.spans.append(self.alloc, self.active_span);
+                const jump_idx = try self.emitJump(.jump);
+                try self.break_jumps.append(self.alloc, jump_idx);
+                return;
             },
             .fn_expr => |fn_expr| try self.compileFn(fn_expr.params, fn_expr.body, "<fn>", null),
             .match_expr => |v| try self.compileMatch(v.subject, v.arms),
@@ -636,7 +655,6 @@ pub const Compiler = struct {
         switch (right.expr) {
             .ident => {
                 try self.compile(right, true);
-                try self.duplicateRegister();
                 try self.compile(left, true);
                 try self.emit(.call, 1);
             },
@@ -645,7 +663,6 @@ pub const Compiler = struct {
             },
             .fn_expr => |fn_expr| {
                 try self.compileFn(fn_expr.params, fn_expr.body, "<fn>", null);
-                try self.duplicateRegister();
                 try self.compile(left, true);
                 try self.emit(.call, 1);
             },
@@ -1142,7 +1159,7 @@ pub const Compiler = struct {
         errdefer if (state_pushed) {
             var leaked = self.functions.pop() orelse unreachable;
             leaked.deinit(self.alloc);
-        _ = self.slot_allocators.pop() orelse unreachable;
+            _ = self.slot_allocators.pop() orelse unreachable;
         };
 
         const prev_in_loop = self.in_loop_depth;

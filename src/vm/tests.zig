@@ -196,7 +196,7 @@ test "vm gc keeps rooted tables and their children alive" {
     }
 
     try vm.push(.{ .table = parent_id });
-        defer _ = vm.pop() catch {};
+    defer _ = vm.pop() catch {};
 
     trigger_gc(&vm);
 
@@ -301,7 +301,7 @@ test "vm gc keeps rooted closures and captured tables alive" {
     });
     const closure_id = try vm.functions.createClosure(proto_id, &.{upvalue_id});
     try vm.push(.{ .function = closure_id });
-        defer _ = vm.pop() catch {};
+    defer _ = vm.pop() catch {};
 
     trigger_gc(&vm);
 
@@ -330,7 +330,7 @@ test "vm gc keeps rooted tuples and nested tuples alive" {
     const parent_id = try vm.tuples.create(&.{ Data.new.num(1), .{ .tuple = child_id } });
 
     try vm.push(.{ .tuple = parent_id });
-        defer _ = vm.pop() catch {};
+    defer _ = vm.pop() catch {};
 
     trigger_gc(&vm);
 
@@ -373,7 +373,7 @@ test "vm gc keeps rooted strings alive" {
 
     const s = try vm.ownString("keep-me");
     try vm.push(try vm.ownDataString(vm.stringValue(s)));
-        defer _ = vm.pop() catch {};
+    defer _ = vm.pop() catch {};
 
     trigger_gc(&vm);
 
