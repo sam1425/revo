@@ -408,7 +408,7 @@ const Parser = struct {
                 const obj_node = try self.allocExpr(first_ident.span(), .{ .ident = first_ident.text });
                 const key_node = try self.allocExpr(
                     atom_token.span(),
-                    .{ .string = method_name },
+                    .{ .hash = method_name },
                 );
                 const index_node = try self.allocExpr(
                     Span.merge(first_ident.span(), atom_token.span()),
