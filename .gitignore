@@ -1,4 +1,6 @@
 zig-out
 # all dotfiles
-.*
+# .*
 *.so
+.priv
+.zig-cache
