@@ -7,18 +7,19 @@ const Data = revo.Data;
 const testing = revo.lang.testing;
 
 pub const Tuple = struct {
+    alloc: std.mem.Allocator,
     items: []Data,
     metatable: ?memory.TableID = null,
 
-    pub fn deinit(self: *Tuple, alloc: std.mem.Allocator) void {
-        alloc.free(self.items);
+    pub fn deinit(self: *Tuple) void {
+        self.alloc.free(self.items);
     }
 
     pub fn len(self: *const Tuple) usize {
         return self.items.len;
     }
 
-    pub fn write(self: *const Tuple, writer: *std.Io.Writer, vm: *revo.VM, mode: Data.RenderMode) !void {
+    pub fn write(self: *Tuple, writer: *std.Io.Writer, vm: *revo.VM, mode: Data.RenderMode) !void {
         try writer.writeAll("(");
         for (self.items, 0..) |item, i| {
             if (i != 0) try writer.writeAll(", ");
@@ -49,23 +50,22 @@ pub const TuplePool = struct {
 
     pub fn deinit(self: *TuplePool) void {
         for (self.tuples.items) |*slot| {
-            if (slot.value) |*tuple|
-                tuple.deinit(self.alloc);
+            if (slot.value) |*tuple| {
+                tuple.deinit();
+            }
         }
         self.tuples.deinit(self.alloc);
     }
 
     pub fn create(self: *TuplePool, items: []const Data) !memory.TupleID {
         const owned = try self.alloc.dupe(Data, items);
-        errdefer self.alloc.free(owned);
-
         return try revo.allocSlot(
             TupleSlot,
             memory.TupleID,
             self.alloc,
             &self.tuples,
             &self.free_head,
-            .{ .value = .{ .items = owned } },
+            .{ .value = .{ .alloc = self.alloc, .items = owned } },
         );
     }
 
@@ -74,10 +74,6 @@ pub const TuplePool = struct {
         const slot = &self.tuples.items[id];
         if (slot.value) |*tuple| return tuple;
         return error.InvalidTuple;
-    }
-
-    pub fn getUnsafe(self: *TuplePool, id: memory.TupleID) *Tuple {
-        return &self.tuples.items[id].value.?;
     }
 
     pub fn mark(self: *TuplePool, id: memory.TupleID, vm: *revo.VM) void {
@@ -95,17 +91,16 @@ pub const TuplePool = struct {
         revo.sweepSlots(TupleSlot, memory.TupleID, &self.tuples, &self.free_head, self, TuplePool.finalizeSlot);
     }
 
-    fn finalizeSlot(slot: *TupleSlot, pool: *TuplePool) void {
-        if (slot.value) |*tuple|
-            tuple.deinit(pool.alloc);
+    fn finalizeSlot(slot: *TupleSlot, _: *TuplePool) void {
+        if (slot.value) |*tuple| tuple.deinit();
     }
 
     pub fn bytes(self: *const TuplePool) usize {
         var total: usize = 0;
         for (self.tuples.items) |slot| {
             if (slot.value) |*tuple| {
-                total += @sizeOf(Tuple);
-                total += @sizeOf(Data) * tuple.items.len;
+                total += 32; // tuple base overhead
+                total += @sizeOf(Data) * tuple.items.len; // per element
             }
         }
         return total;

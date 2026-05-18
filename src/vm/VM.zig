@@ -1238,7 +1238,7 @@ fn returnRegister(self: *VM, instr: Instruction) EvalError!void {
 
     // toplevel :err tuple should panic
     if (returning_to_exit and result == .tuple) {
-        const tuple = self.tuples.getUnsafe(result.tuple);
+        const tuple = try self.tuples.get(result.tuple);
         if (tuple.items.len >= 1) {
             const tag = tuple.items[0];
             if (tag == .atom and tag.atom == revo.core_atoms.atom_id(.err)) {
@@ -1548,7 +1548,7 @@ fn evalRegister(self: *VM, instr: Instruction) EvalError!void {
             // happy path: small non-negative number index
             if (idx_val == .number and idx_val.number >= 0 and @floor(idx_val.number) == idx_val.number) {
                 const idx: usize = @intFromFloat(idx_val.number);
-                const t = self.tuples.getUnsafe(tuple_id);
+                const t = try self.tuples.get(tuple_id);
                 if (idx < t.items.len) {
                     try self.writeRegister(instr.a, t.items[idx]);
                     return;
@@ -1558,7 +1558,7 @@ fn evalRegister(self: *VM, instr: Instruction) EvalError!void {
             // slow path: existing hash-based lookup for atoms/etc
             const idx = revo.asIndex(idx_val.as_number() catch return error.TypeError) catch return error.TypeError;
 
-            const t = self.tuples.getUnsafe(tuple_id);
+            const t = try self.tuples.get(tuple_id);
             if (idx >= t.items.len) {
                 try self.setRuntimeMessageFmt("tuple index {d} out of range for tuple of length {d}", .{ idx, t.items.len });
                 return error.InvalidTuple;
