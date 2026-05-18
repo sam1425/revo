@@ -49,6 +49,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = !is_freestanding,
     });
 
     // even without the if stmt it costs nothing when compiled in when a different backend is avaliable
@@ -103,7 +104,6 @@ pub fn build(b: *std.Build) void {
     const run_exe = b.addExecutable(.{ .name = "revo-run", .root_module = run_exe_root });
 
     const run_cmd = b.addRunArtifact(run_exe);
-
 
     if (b.args) |args| run_cmd.addArgs(args);
     b.step("run", "run the cli").dependOn(&run_cmd.step);
