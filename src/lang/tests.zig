@@ -665,102 +665,6 @@ test "unary macro expands in call position" {
         \\ id(42)
     , 42);
 }
-
-test "pipe works" {
-    try t.top_number(
-        \\ const f = fn(a) a * 2
-        \\ 21 |> f
-    , 42);
-}
-
-test "pipes accept closures" {
-    try t.top_number(
-        \\ 20 |> fn(x) x + 22
-    , 42);
-}
-
-test "double pipe" {
-    try t.top_number(
-        \\ fn a(x) x * 2
-        \\ fn b(x) x + 2
-        \\ 20 |> a |> b
-    , 42);
-}
-
-test "pipe into match" {
-    try t.top_number(
-        \\ 2
-        \\ |> match
-        \\    | x 42
-    , 42);
-}
-
-test "pipe underscore in function arg" {
-    try t.top_string(
-        \\ fn f(a, b) tostring(a) + tostring(b)
-        \\ "asdf" |> f("got", _)
-    , "gotasdf");
-}
-
-test "pipe underscore expr depth > 1" {
-    try t.top_string(
-        \\ "asdf" |> "aaa" + _:upper()
-    , "aaaASDF");
-}
-
-test "pipe underscore call depth > 1" {
-    try t.top_string(
-        \\ "asdf" |> fmt("aaa%s", _:upper())
-    , "aaaASDF");
-}
-
-test "pipe underscore as callee" {
-    try t.top_string(
-        \\ fn f(x)
-        \\   x:upper()
-        \\ 
-        \\ "asdf" |> f(_)
-    , "ASDF");
-}
-
-test "pipe underscore in method arg" {
-    try t.top_number(
-        \\ const obj = { inner = 40, meth = fn(self, x) self.inner + x }
-        \\ obj |> _:meth(2)
-    , 42);
-}
-
-test "pipe underscore in block" {
-    try t.top_string(
-        \\ const x = "asdf"
-        \\ x |> do tostring(_) end
-    , "asdf");
-}
-
-test "pipe underscore in chained calls" {
-    try t.top_string(
-        \\ const f = fn(x) x
-        \\ const a = "test"
-        \\ a |> f() |> f()
-    , "test");
-}
-
-test "pipe underscore in method chain" {
-    try t.top_number(
-        \\ let a = 40
-        \\ const obj = { inner = 20, meth = fn(self) do a = a + self.inner self end }
-        \\ obj |> _:meth() |> _:meth()
-        \\ a
-    , 80);
-}
-
-test "pipe field" {
-    try t.top_number(
-        \\ const t = {5, 6 ,7}
-        \\ 1 |> t[_]
-    , 6);
-}
-
 // test "side prefix" {
 //     // mean must be a side-effect-only procedure. it is fully ignored
 //     try t.top_number(
@@ -2403,4 +2307,142 @@ test "nested ok tuples? extracts inner" {
     try t.top_type(
         \\ (:ok, (:inner, 42))?
     , .tuple);
+}
+
+//
+// pipe
+//
+
+test "pipe: implicit call ident" {
+    try t.top_number(
+        \\ const f = fn(a) a * 2
+        \\ 21 |> f
+    , 42);
+}
+
+test "pipe: implicit call empty parens" {
+    try t.top_number(
+        \\ const f = fn(a) a * 2
+        \\ 21 |> f()
+    , 42);
+}
+
+test "pipe: implicit call chained idents" {
+    try t.top_number(
+        \\ fn a(x) x * 2
+        \\ fn b(x) x + 2
+        \\ 20 |> a |> b
+    , 42);
+}
+
+test "pipe: implicit call chained empty parens" {
+    try t.top_number(
+        \\ fn a(x) x * 2
+        \\ fn b(x) x + 2
+        \\ 20 |> a() |> b()
+    , 42);
+}
+
+test "pipe: implicit call (mixed chain)" {
+    try t.top_number(
+        \\ fn a(x) x * 2
+        \\ fn b(x) x + 2
+        \\ 20 |> a() |> b
+    , 42);
+}
+
+test "pipe: closures" {
+    try t.top_number(
+        \\ 20 |> fn(x) x + 22
+    , 42);
+}
+
+test "pipe: implicit match subject" {
+    try t.top_number(
+        \\ 2
+        \\ |> match
+        \\    | x 42
+    , 42);
+}
+
+// pipe placeholders
+
+test "pipe: explicit placeholder arg position" {
+    try t.top_string(
+        \\ fn f(a, b) tostring(a) + tostring(b)
+        \\ "asdf" |> f("got ", _)
+    , "got asdf");
+}
+
+test "pipe: explicit placeholder method receiver" {
+    try t.top_number(
+        \\ const obj = { inner = 40, meth = fn(self, x) self.inner + x }
+        \\ obj |> _:meth(2)
+    , 42);
+}
+
+test "pipe: explicit placeholder index access" {
+    try t.top_number(
+        \\ const t = {5, 6, 7}
+        \\ 1 |> t[_]
+    , 6);
+}
+
+test "pipe: explicit placeholder expression" {
+    try t.top_string(
+        \\ "asdf" |> "aaa" + _:upper()
+    , "aaaASDF");
+}
+
+test "pipe: explicit placeholder in nested call arg" {
+    try t.top_string(
+        \\ fn fmt(s, v) s + v
+        \\ "asdf" |> fmt("aaa", _:upper())
+    , "aaaASDF");
+}
+
+test "pipe: explicit placeholder in expr" {
+    try t.top_string(
+        \\ const x = "asdf"
+        \\ x |> do tostring(_) end
+    , "asdf");
+}
+
+test "pipe: multiple placeholders" {
+    try t.top_number(
+        \\ fn add(a, b) a + b
+        \\ 5 |> add(_, _)
+    , 10);
+}
+
+test "pipe: placeholder as callee" {
+    try t.top_string(
+        \\ fn f(x) x:upper()
+        \\ "asdf" |> f(_)
+    , "ASDF");
+}
+
+test "pipe: method chain with state mutation" {
+    try t.top_number(
+        \\ let counter = 40
+        \\ const obj = { 
+        \\   val = 20, 
+        \\   add = fn(self) 
+        \\     do 
+        \\       counter = counter + self.val 
+        \\       self 
+        \\     end 
+        \\ }
+        \\ obj |> _:add() |> _:add()
+        \\ counter
+    , 80);
+}
+
+test "pipe: nested scope capture" {
+    try t.top_string(
+        \\ "hello" |> do 
+        \\    const transform = fn(s) s:upper()
+        \\    transform(_)
+        \\ end
+    , "HELLO");
 }
