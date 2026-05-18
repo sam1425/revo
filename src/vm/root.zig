@@ -24,12 +24,6 @@ pub const EvalErrorKind = @import("debug.zig").EvalErrorKind;
 pub const EvalFailure = @import("debug.zig").EvalFailure;
 pub const EvalResult = @import("debug.zig").EvalResult;
 
-// re-exports from root module (source of truth)
-// note: also available as revo.core_atoms and revo.isFalse
-const root = @import("root.zig"); // root module is revo
-pub const core_atoms = root.core_atoms;
-pub const isFalse = root.isFalse;
-
 test {
     _ = @import("bytecode.zig");
     _ = @import("VM.zig");
